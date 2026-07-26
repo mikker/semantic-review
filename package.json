@@ -1,0 +1,21 @@
+{
+  "name": "semrev",
+  "version": "0.1.0",
+  "description": "Semantic diff review for coding agents: an LLM turns a git diff into a narrative HTML report, a human comments on it, and the feedback comes back as plaintext.",
+  "type": "module",
+  "bin": {
+    "semrev": "src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "shiki": "^3.13.0",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
+  }
+}
