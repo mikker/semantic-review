@@ -38,7 +38,13 @@ function tokenStyle(token: { htmlStyle?: string | Record<string, string>; color?
   return token.color ? `color:${token.color}` : "";
 }
 
-function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk): string {
+interface LineRange {
+  from: number;
+  to: number;
+}
+
+// Renders a hunk (or an excerpt of it) as a highlighted, commentable diff table.
+function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk, range?: LineRange | null): string {
   const lang = langFor(file.path);
   const code = hunk.lines.map((l) => l.text).join("\n");
   let tokenLines: { htmlStyle?: string | Record<string, string>; color?: string; content: string }[][];
@@ -51,7 +57,16 @@ function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk): string {
     tokenLines = hunk.lines.map((l) => [{ content: l.text }]);
   }
 
-  const rows = hunk.lines.map((line, i) => {
+  let indices = hunk.lines.map((_, i) => i);
+  if (range) {
+    const within = (n: number | null) => n != null && n >= range.from && n <= range.to;
+    const sliced = indices.filter((i) => within(hunk.lines[i].newNo) || within(hunk.lines[i].oldNo));
+    if (sliced.length > 0) indices = sliced;
+  }
+  const elided = indices.length < hunk.lines.length;
+
+  const rows = indices.map((i) => {
+    const line = hunk.lines[i];
     const tokens = tokenLines[i] ?? [{ content: line.text }];
     const codeHtml =
       tokens.map((t) => `<span style="${esc(tokenStyle(t))}">${esc(t.content)}</span>`).join("") || "&nbsp;";
@@ -63,8 +78,10 @@ function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk): string {
     </tr>`;
   });
 
-  return `<div class="hunk" id="${hunk.id}">
-    <div class="hunk-head"><span class="path">${esc(file.path)}</span><span class="hh">${esc(hunk.header)}</span></div>
+  return `<div class="hunk">
+    <div class="hunk-head"><span class="path">${esc(file.path)}</span><span class="hh">${esc(
+      elided ? `excerpt · ${hunk.header}` : hunk.header,
+    )}</span></div>
     <table class="diff"><tbody>${rows.join("")}</tbody></table>
   </div>`;
 }
@@ -73,36 +90,65 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
   const langs = [...new Set(files.map((f) => langFor(f.path)).filter((l) => l !== "text"))];
   const hl = await createHighlighter({ themes: ["github-light", "github-dark"], langs });
   const hunks = hunkById(files);
-  const hunkHtml = new Map<string, string>();
-  for (const [id, { file, hunk }] of hunks) hunkHtml.set(id, renderHunk(hl, file, hunk));
 
-  const tabs = results
-    .map(
-      (r, i) =>
-        `<button class="tab${i === 0 ? " active" : ""}" data-tab="${i}">${esc(r.backend)}</button>`,
-    )
+  const agentOptions = results
+    .map((r, i) => `<option value="${i}">${esc(r.backend)}</option>`)
     .join("");
 
   const panels = results
     .map((r, i) => {
+      const toc = r.analysis.sections
+        .map((s, si) => `<a href="#p${i}s${si}">${esc(s.heading)}</a>`)
+        .join("");
       const sections = r.analysis.sections
-        .map(
-          (s, si) => `<section data-ctx="${esc(s.heading)}">
+        .map((s, si) => {
+          const snippets = s.snippets
+            .map((sn) => {
+              const found = hunks.get(sn.hunk_id);
+              if (!found) return `<p class="missing">unknown hunk ${esc(sn.hunk_id)}</p>`;
+              const range = sn.from != null && sn.to != null ? { from: sn.from, to: sn.to } : null;
+              const note = sn.note.trim() ? `<p class="note">${esc(sn.note).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>` : "";
+              return renderHunk(hl, found.file, found.hunk, range) + note;
+            })
+            .join("");
+          return `<section id="p${i}s${si}" data-ctx="${esc(s.heading)}">
             <h2>${esc(s.heading)}</h2>
-            <div class="prose">${prose(s.prose)}</div>
-            ${s.hunk_ids.map((id) => hunkHtml.get(id) ?? `<p class="missing">unknown hunk ${esc(id)}</p>`).join("")}
-          </section>`,
-        )
+            <div class="prose">${prose(s.intro)}</div>
+            ${snippets}
+          </section>`;
+        })
         .join("");
       const notes = r.analysis.notes.length
-        ? `<section data-ctx="Reviewer notes"><h2>Reviewer notes</h2><ul class="notes">${r.analysis.notes
+        ? `<section data-ctx="Agent's notes"><h2>Agent&#8217;s notes</h2><ul class="notes">${r.analysis.notes
             .map((n) => `<li>${esc(n).replace(/`([^`]+)`/g, "<code>$1</code>")}</li>`)
             .join("")}</ul></section>`
         : "";
       return `<div class="panel${i === 0 ? " active" : ""}" data-panel="${i}" data-backend="${esc(r.backend)}">
-        <div class="summary prose" data-ctx="Summary">${prose(r.analysis.summary)}</div>
+        <div class="tldr" data-ctx="TL;DR">
+          <span class="tag">TL;DR</span>
+          <div class="prose">${prose(r.analysis.summary)}</div>
+          ${r.analysis.sections.length > 1 ? `<nav class="toc">${toc}</nav>` : ""}
+        </div>
         ${sections}${notes}
       </div>`;
+    })
+    .join("");
+
+  // Full diff tier: every file, every hunk, collapsed per file. Shared across tabs.
+  const fullDiff = files
+    .map((file) => {
+      const adds = file.hunks.reduce((n, h) => n + h.lines.filter((l) => l.kind === "add").length, 0);
+      const dels = file.hunks.reduce((n, h) => n + h.lines.filter((l) => l.kind === "del").length, 0);
+      const body =
+        file.status === "binary"
+          ? `<p class="missing">binary file</p>`
+          : file.hunks.map((h) => renderHunk(hl, file, h)).join("");
+      return `<details data-ctx="Full diff: ${esc(file.path)}">
+        <summary><span class="path">${esc(file.path)}</span><span class="stat"><b class="a">+${adds}</b> <b class="d">−${dels}</b>${
+          file.status !== "modified" ? ` · ${file.status}` : ""
+        }</span></summary>
+        ${body}
+      </details>`;
     })
     .join("");
 
@@ -135,25 +181,39 @@ header .brand { color: var(--muted); font-size: 13px; }
   font-size: 14px; font-weight: 600; cursor: pointer; }
 main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 0; }
 #report { padding: 20px 28px 80px; max-width: 980px; }
-.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
-.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px;
-  font-size: 14px; color: var(--muted); cursor: pointer; }
-.tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+#agent { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--fg);
+  font-size: 13px; padding: 5px 8px; }
+.levels { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.levels button { background: none; border: 0; border-right: 1px solid var(--border); padding: 6px 14px;
+  font-size: 13px; color: var(--muted); cursor: pointer; }
+.levels button:last-child { border-right: 0; }
+.levels button.active { background: var(--panel); color: var(--fg); font-weight: 600; }
+/* Brevity levels: tldr = summary + notes; walk = + sections; full = full diff only */
+body.level-tldr section { display: none; }
+body.level-tldr section[data-ctx="Agent's notes"] { display: block; }
+body.level-tldr #fulldiff, body.level-walk #fulldiff { display: none; }
+body.level-full .panel.active, body.level-full #agent { display: none; }
 .panel { display: none; } .panel.active { display: block; }
-.summary { padding: 12px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
-section { margin-top: 28px; }
-h2 { font-size: 17px; margin: 0 0 8px; }
-.prose p { margin: 8px 0; }
+.tldr { padding: 12px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.tldr .tag { font-size: 11px; font-weight: 700; letter-spacing: .05em; color: var(--accent); }
+.tldr .prose p:first-child { margin-top: 4px; }
+.toc { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 13px; }
+.toc a { color: var(--accent); text-decoration: none; }
+section { margin-top: 26px; }
+h2 { font-size: 17px; margin: 0 0 6px; }
+.prose p { margin: 6px 0; }
+.note { margin: 6px 0 14px; font-size: 13.5px; color: var(--muted); }
 code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
   padding: 1px 4px; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .notes { margin: 8px 0; padding-left: 20px; } .notes li { margin: 4px 0; }
-.hunk { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.hunk-head { display: flex; gap: 12px; padding: 6px 12px; background: var(--panel);
+.hunk { margin: 10px 0 4px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.hunk-head { display: flex; gap: 12px; padding: 5px 12px; background: var(--panel);
   border-bottom: 1px solid var(--border); font: 12px ui-monospace, Menlo, monospace; }
 .hunk-head .path { font-weight: 600; } .hunk-head .hh { color: var(--muted); }
 .diff { width: 100%; border-collapse: collapse; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .diff td { padding: 0 8px; white-space: pre-wrap; word-break: break-all; vertical-align: top; }
-.diff .g { width: 1%; min-width: 34px; text-align: right; color: var(--muted); user-select: none; }
+.diff .g { width: 1%; min-width: 34px; text-align: right; color: var(--muted); user-select: none;
+  white-space: nowrap; word-break: normal; }
 .diff .m { width: 1%; user-select: none; color: var(--muted); }
 .diff tr.add td { background: var(--add-bg); } .diff tr.del td { background: var(--del-bg); }
 .diff .c { position: relative; padding-left: 26px; }
@@ -162,6 +222,14 @@ code { background: var(--panel); border: 1px solid var(--border); border-radius:
   opacity: 0; transition: opacity .1s; padding: 0; }
 tr:hover .lc { opacity: 1; }
 .missing { color: var(--muted); font-style: italic; }
+details { margin: 8px 0; }
+summary { cursor: pointer; padding: 6px 10px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; display: flex; gap: 12px; align-items: baseline; }
+details[open] > summary { border-radius: 8px 8px 0 0; }
+summary .path { font: 12.5px ui-monospace, Menlo, monospace; font-weight: 600; flex: 1; }
+summary .stat { font-size: 12px; color: var(--muted); }
+summary .a { color: #1a7f37; } summary .d { color: #cf222e; }
+@media (prefers-color-scheme: dark) { summary .a { color: #3fb950; } summary .d { color: #f85149; } }
 aside { border-left: 1px solid var(--border); padding: 16px; position: sticky; top: 49px;
   height: calc(100vh - 49px); overflow-y: auto; }
 aside h3 { margin: 0 0 10px; font-size: 14px; }
@@ -191,16 +259,24 @@ aside h3 { margin: 0 0 10px; font-size: 14px; }
 #finished { display: none; padding: 80px 20px; text-align: center; }
 </style>
 </head>
-<body>
+<body class="level-walk">
 <header>
   <span class="brand">semrev</span>
   <h1>${esc(title)}</h1>
+  ${results.length > 1 ? `<select id="agent" title="Analysis by">${agentOptions}</select>` : ""}
+  <div class="levels">
+    <button data-level="tldr">TL;DR</button>
+    <button data-level="walk" class="active">Walkthrough</button>
+    <button data-level="full">Full diff</button>
+  </div>
   <button id="done">Done</button>
 </header>
 <main>
   <div id="report">
-    ${results.length > 1 ? `<div class="tabs">${tabs}</div>` : ""}
     ${panels}
+    <div id="fulldiff" data-ctx="Full diff">
+      ${fullDiff}
+    </div>
   </div>
   <aside>
     <h3>Comments</h3>
@@ -222,11 +298,17 @@ const comments = [];
 const $ = (s, el) => (el || document).querySelector(s);
 const multiTab = ${results.length > 1 ? "true" : "false"};
 
-// Tabs
-document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
-  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === tab));
+// Agent selector
+const agentSelect = $("#agent");
+if (agentSelect) agentSelect.addEventListener("change", () => {
   document.querySelectorAll(".panel").forEach(p =>
-    p.classList.toggle("active", p.dataset.panel === tab.dataset.tab));
+    p.classList.toggle("active", p.dataset.panel === agentSelect.value));
+});
+
+// Brevity levels
+document.querySelectorAll(".levels button").forEach(btn => btn.addEventListener("click", () => {
+  document.querySelectorAll(".levels button").forEach(b => b.classList.toggle("active", b === btn));
+  document.body.className = "level-" + btn.dataset.level;
 }));
 
 function currentBackend() {

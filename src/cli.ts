@@ -9,18 +9,24 @@ import { resolveBackends, runBackends, BACKENDS } from "./backends";
 import { renderReport } from "./render";
 import { serveReview, formatReview } from "./server";
 
-const USAGE = `usage: semrev [--with <backend,...>] [--no-open] [git diff args...]
+const USAGE = `usage: semrev [options] [git diff args...]
 
 Reads the diff from stdin if piped, otherwise runs \`git diff <args>\`
 (default: git diff HEAD). Prints the human's review feedback to stdout.
 
-backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
+options:
+  --with <backend,...>   backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
+  --model <id>           model for the anthropic backend (default: claude-opus-5,
+                         env SEMREV_MODEL; e.g. claude-sonnet-5, claude-haiku-4-5)
+  --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
+  --no-open              don't open the browser
 
 examples:
   semrev                      review uncommitted changes
   semrev main...HEAD          review a branch
   git diff -U10 | semrev      review a piped diff with more context
-  semrev --with anthropic,codex   two analyses, tabbed`;
+  semrev --with anthropic,codex   two analyses, tabbed
+  semrev --model claude-sonnet-5 --effort medium   cheaper/faster analysis`;
 
 async function getDiff(gitArgs: string[]): Promise<string> {
   if (!process.stdin.isTTY) {
@@ -43,6 +49,8 @@ async function main() {
   const gitArgs: string[] = [];
   let withBackends: string[] | null = null;
   let openBrowser = true;
+  let model: string | undefined;
+  let effort: "low" | "medium" | "high" | "xhigh" | "max" | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -53,6 +61,14 @@ async function main() {
       openBrowser = false;
     } else if (arg === "--with") {
       withBackends = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    } else if (arg === "--model") {
+      model = argv[++i];
+    } else if (arg === "--effort") {
+      const level = argv[++i];
+      if (!["low", "medium", "high", "xhigh", "max"].includes(level ?? "")) {
+        throw new Error(`invalid --effort "${level}" (low|medium|high|xhigh|max)`);
+      }
+      effort = level as typeof effort;
     } else {
       gitArgs.push(arg);
     }
@@ -72,7 +88,7 @@ async function main() {
   );
 
   const annotated = diffForModel(files);
-  const results = await runBackends(backends, annotated);
+  const results = await runBackends(backends, annotated, { model, effort });
   const html = await renderReport(results, files);
   const review = await serveReview(html, openBrowser);
 

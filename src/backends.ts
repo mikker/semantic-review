@@ -2,10 +2,15 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { AnalysisSchema, analysisPrompt, extractAnalysis, type Analysis, type AnalysisResult } from "./analysis";
 
+export interface AnalyzeOpts {
+  model?: string; // anthropic backend only; agent CLIs use their own configured model
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+}
+
 export interface Backend {
   name: string;
   available(): Promise<boolean>;
-  analyze(annotatedDiff: string): Promise<Analysis>;
+  analyze(annotatedDiff: string, opts: AnalyzeOpts): Promise<Analysis>;
 }
 
 function haveCommand(cmd: string): Promise<boolean> {
@@ -39,12 +44,16 @@ function cliBackend(name: string, argv: string[]): Backend {
 const anthropicBackend: Backend = {
   name: "anthropic",
   available: async () => !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
-  async analyze(annotatedDiff) {
+  async analyze(annotatedDiff, opts) {
     const client = new Anthropic();
     const stream = client.messages.stream({
-      model: process.env.SEMREV_MODEL || "claude-opus-5",
+      model: opts.model || process.env.SEMREV_MODEL || "claude-opus-5",
       max_tokens: 32000,
-      output_config: { format: zodOutputFormat(AnalysisSchema) },
+      output_config: {
+        format: zodOutputFormat(AnalysisSchema),
+        // SDK typings lag the API: "xhigh" is valid but missing from the union.
+        ...(opts.effort ? { effort: opts.effort as "high" } : {}),
+      },
       messages: [{ role: "user", content: analysisPrompt(annotatedDiff) }],
     });
     const message = await stream.finalMessage();
@@ -78,9 +87,13 @@ export async function resolveBackends(requested: string[] | null): Promise<Backe
   );
 }
 
-export async function runBackends(backends: Backend[], annotatedDiff: string): Promise<AnalysisResult[]> {
+export async function runBackends(
+  backends: Backend[],
+  annotatedDiff: string,
+  opts: AnalyzeOpts = {},
+): Promise<AnalysisResult[]> {
   const settled = await Promise.allSettled(
-    backends.map(async (b) => ({ backend: b.name, analysis: await b.analyze(annotatedDiff) })),
+    backends.map(async (b) => ({ backend: b.name, analysis: await b.analyze(annotatedDiff, opts) })),
   );
   const results: AnalysisResult[] = [];
   for (let i = 0; i < settled.length; i++) {

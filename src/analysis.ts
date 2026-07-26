@@ -6,8 +6,15 @@ export const AnalysisSchema = z.object({
   sections: z.array(
     z.object({
       heading: z.string(),
-      prose: z.string(),
-      hunk_ids: z.array(z.string()),
+      intro: z.string(),
+      snippets: z.array(
+        z.object({
+          hunk_id: z.string(),
+          from: z.number().nullable(),
+          to: z.number().nullable(),
+          note: z.string(),
+        }),
+      ),
     }),
   ),
   notes: z.array(z.string()),
@@ -22,24 +29,34 @@ export interface AnalysisResult {
 }
 
 export function analysisPrompt(annotatedDiff: string): string {
-  return `You are writing a semantic review guide for a git diff. Traditional diffs list files alphabetically; your job is to reorganize the change into a narrative a reviewer can actually follow.
+  return `You are writing a short semantic review guide for a git diff. Traditional diffs list files alphabetically; your job is to reorganize the change into a brief narrative a reviewer can follow in a minute or two. The reviewer also has the full diff available below your guide, so you do NOT need to show everything — show only the lines that carry the meaning of the change.
 
-Each hunk below is labeled with an id like "hunk h3". Produce a JSON object with exactly this shape:
+Each hunk is labeled "hunk hN". Every line is prefixed with its line number in the new file ("42|+code"); deleted lines carry the old-file number prefixed with a minus ("-17|-code").
+
+Produce a JSON object with exactly this shape:
 
 {
   "title": "short title for the change",
-  "summary": "2-4 sentence overview: what the change does and why, as far as it can be inferred",
+  "summary": "1-2 sentence TL;DR: what the change does and why",
   "sections": [
-    { "heading": "...", "prose": "...", "hunk_ids": ["h1", "h4"] }
+    {
+      "heading": "...",
+      "intro": "1-2 sentences introducing this part of the change",
+      "snippets": [
+        { "hunk_id": "h3", "from": 40, "to": 48, "note": "one short line bridging to the next snippet (or \\"\\")" }
+      ]
+    }
   ],
-  "notes": ["risks, smells, or observations worth a reviewer's attention", ...]
+  "notes": ["risks or things a reviewer should double-check", ...]
 }
 
 Rules:
-- Group hunks by code path / concern, not by file. Order sections by importance: the core change first, then supporting changes, then mechanical/chore changes.
-- Every hunk id must appear in at least one section. A hunk may appear in more than one if it is genuinely relevant to both.
-- Prose explains what the code does and why, naming the functions/types involved. Use backticks for identifiers. Plain text otherwise, no markdown headings.
-- "notes" is for things a reviewer should double-check: behavior changes, missing tests, edge cases, inconsistencies. Empty array if none.
+- Be brief. Section intros are 1-2 sentences; snippet notes are one short line or "". No filler.
+- Snippets are EXCERPTS: pick the smallest line range that shows the interesting part (typically 3-12 lines), using the line-number prefixes. from/to use new-file numbers; for ranges of deleted lines use the old-file numbers (positive). Use null for both to include the whole hunk — only when the hunk is already small.
+- Group by code path / concern, not by file. Order sections by importance: core change first.
+- Purely mechanical changes (renames, lockfiles, formatting) need no snippet — mention them in one sentence in an intro or the summary.
+- Prose is plain text; use backticks for identifiers. No markdown headings.
+- "notes" is for behavior changes, missing tests, edge cases, inconsistencies. Empty array if none.
 - Respond with ONLY the JSON object, no fences, no commentary.
 
 The diff:

@@ -89,7 +89,11 @@ export function diffForModel(files: DiffFile[]): string {
       parts.push(`### hunk ${hunk.id} — ${file.path} (${file.status}) ${hunk.header}`);
       parts.push(
         hunk.lines
-          .map((l) => (l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ") + l.text)
+          .map((l) => {
+            const no = l.newNo != null ? `${l.newNo}` : `-${l.oldNo}`;
+            const sign = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ";
+            return `${no}|${sign}${l.text}`;
+          })
           .join("\n"),
       );
     }
