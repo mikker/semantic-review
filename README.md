@@ -1,6 +1,12 @@
+<img src="semantic-review.webp" width="452">
+
 # semantic-review
 
-Semantic diff review for coding agents. An LLM reads a git diff and reorganizes it into a narrative HTML report — grouped by concern, not alphabetically, with the interesting excerpts inline, highlighted and commentable. When the reviewer clicks **Done**, their comments print to stdout as plaintext for the agent that invoked it.
+> Tell me that again but _slowly_...
+
+Semantic diff review for coding agents.
+
+An LLM reads a git diff and reorganizes it into a **narrative HTML report** — grouped by concern, not alphabetically, with the interesting excerpts inline, highlighted and commentable. When the reviewer clicks **Done**, their comments print to `stdout` as plaintext for the agent that invoked it.
 
 ```
 agent runs `semantic-review` ──► LLM analyzes the diff ──► browser opens the report
