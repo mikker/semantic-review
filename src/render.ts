@@ -43,6 +43,8 @@ interface LineRange {
   to: number;
 }
 
+const CARD = "rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900";
+
 // Renders a hunk (or an excerpt of it) as a highlighted, commentable diff table.
 function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk, range?: LineRange | null): string {
   const lang = langFor(file.path);
@@ -78,10 +80,12 @@ function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk, range?: LineRan
     </tr>`;
   });
 
-  return `<div class="hunk">
-    <div class="hunk-head"><span class="path">${esc(file.path)}</span><span class="hh">${esc(
-      elided ? `excerpt · ${hunk.header}` : hunk.header,
-    )}</span></div>
+  return `<div class="hunk ${CARD} my-3 overflow-hidden">
+    <div class="flex gap-3 border-b border-stone-200 bg-stone-100 px-3 py-1.5 font-mono text-xs dark:border-stone-800 dark:bg-stone-950/60">
+      <span class="font-semibold">${esc(file.path)}</span>
+      <span class="uppercase tracking-wider text-stone-400">${elided ? "excerpt" : ""}</span>
+      <span class="text-stone-400">${esc(hunk.header)}</span>
+    </div>
     <table class="diff"><tbody>${rows.join("")}</tbody></table>
   </div>`;
 }
@@ -90,6 +94,11 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
   const langs = [...new Set(files.map((f) => langFor(f.path)).filter((l) => l !== "text"))];
   const hl = await createHighlighter({ themes: ["github-light", "github-dark"], langs });
   const hunks = hunkById(files);
+  const anyDiagram = results.some(
+    (r) => r.analysis.diagram.trim() || r.analysis.sections.some((s) => s.diagram.trim()),
+  );
+  const diagramCard = (source: string) =>
+    source.trim() ? `<div class="${CARD} my-4 p-4"><pre class="mermaid">${esc(source)}</pre></div>` : "";
 
   const agentOptions = results
     .map((r, i) => `<option value="${i}">${esc(r.backend)}</option>`)
@@ -98,55 +107,67 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
   const panels = results
     .map((r, i) => {
       const toc = r.analysis.sections
-        .map((s, si) => `<a href="#p${i}s${si}">${esc(s.heading)}</a>`)
+        .map((s, si) => `<a class="text-indigo-600 hover:underline dark:text-indigo-400" href="#p${i}s${si}">${esc(s.heading)}</a>`)
         .join("");
       const sections = r.analysis.sections
         .map((s, si) => {
           const snippets = s.snippets
             .map((sn) => {
               const found = hunks.get(sn.hunk_id);
-              if (!found) return `<p class="missing">unknown hunk ${esc(sn.hunk_id)}</p>`;
+              if (!found) return `<p class="text-sm italic text-stone-400">unknown hunk ${esc(sn.hunk_id)}</p>`;
               const range = sn.from != null && sn.to != null ? { from: sn.from, to: sn.to } : null;
-              const note = sn.note.trim() ? `<p class="note">${esc(sn.note).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>` : "";
+              const note = sn.note.trim()
+                ? `<p class="note mb-4 text-[13.5px] text-stone-500 dark:text-stone-400">${esc(sn.note).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>`
+                : "";
               return renderHunk(hl, found.file, found.hunk, range) + note;
             })
             .join("");
-          return `<section id="p${i}s${si}" data-ctx="${esc(s.heading)}">
-            <h2>${esc(s.heading)}</h2>
-            <div class="prose">${prose(s.intro)}</div>
+          return `<section id="p${i}s${si}" data-ctx="${esc(s.heading)}" class="mt-10">
+            <h2 class="font-serif text-xl">${esc(s.heading)}</h2>
+            <div class="prose-x">${prose(s.intro)}</div>
+            ${diagramCard(s.diagram)}
             ${snippets}
           </section>`;
         })
         .join("");
       const notes = r.analysis.notes.length
-        ? `<section data-ctx="Agent's notes"><h2>Agent&#8217;s notes</h2><ul class="notes">${r.analysis.notes
-            .map((n) => `<li>${esc(n).replace(/`([^`]+)`/g, "<code>$1</code>")}</li>`)
-            .join("")}</ul></section>`
+        ? `<section data-ctx="Agent's notes" class="mt-10">
+            <h2 class="font-serif text-xl">Agent&#8217;s notes</h2>
+            <ul class="mt-2 list-disc space-y-1 pl-5">${r.analysis.notes
+              .map((n) => `<li>${esc(n).replace(/`([^`]+)`/g, "<code>$1</code>")}</li>`)
+              .join("")}</ul>
+          </section>`
         : "";
       return `<div class="panel${i === 0 ? " active" : ""}" data-panel="${i}" data-backend="${esc(r.backend)}">
-        <div class="tldr" data-ctx="TL;DR">
-          <span class="tag">TL;DR</span>
-          <div class="prose">${prose(r.analysis.summary)}</div>
-          ${r.analysis.sections.length > 1 ? `<nav class="toc">${toc}</nav>` : ""}
+        <div class="tldr ${CARD} p-5" data-ctx="TL;DR">
+          <span class="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">TL;DR</span>
+          <div class="prose-x">${prose(r.analysis.summary)}</div>
+          ${r.analysis.sections.length > 1 ? `<nav class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">${toc}</nav>` : ""}
         </div>
+        ${diagramCard(r.analysis.diagram)}
         ${sections}${notes}
       </div>`;
     })
     .join("");
 
-  // Full diff tier: every file, every hunk, collapsed per file. Shared across tabs.
+  // Full diff tier: every file, every hunk, collapsed per file. Shared across agents.
   const fullDiff = files
     .map((file) => {
       const adds = file.hunks.reduce((n, h) => n + h.lines.filter((l) => l.kind === "add").length, 0);
       const dels = file.hunks.reduce((n, h) => n + h.lines.filter((l) => l.kind === "del").length, 0);
       const body =
         file.status === "binary"
-          ? `<p class="missing">binary file</p>`
+          ? `<p class="text-sm italic text-stone-400">binary file</p>`
           : file.hunks.map((h) => renderHunk(hl, file, h)).join("");
-      return `<details data-ctx="Full diff: ${esc(file.path)}">
-        <summary><span class="path">${esc(file.path)}</span><span class="stat"><b class="a">+${adds}</b> <b class="d">−${dels}</b>${
-          file.status !== "modified" ? ` · ${file.status}` : ""
-        }</span></summary>
+      return `<details class="my-2" data-ctx="Full diff: ${esc(file.path)}">
+        <summary class="${CARD} flex cursor-pointer items-baseline gap-3 px-3 py-2">
+          <span class="flex-1 font-mono text-sm font-semibold">${esc(file.path)}</span>
+          <span class="text-xs text-stone-500">
+            <b class="font-semibold text-emerald-600 dark:text-emerald-400">+${adds}</b>
+            <b class="font-semibold text-red-600 dark:text-red-400">−${dels}</b>${
+              file.status !== "modified" ? ` · ${file.status}` : ""
+            }</span>
+        </summary>
         ${body}
       </details>`;
     })
@@ -160,140 +181,100 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} — semrev</title>
+<script src="https://cdn.tailwindcss.com"></script>
 <style>
-:root {
-  --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d1d9e0;
-  --panel: #f6f8fa; --add-bg: #dafbe1; --del-bg: #ffebe9; --accent: #0969da;
-  color-scheme: light dark;
-}
+/* Custom layer for what Tailwind doesn't cover cleanly: diff tables, shiki
+   dual themes, brevity-level visibility, and the dynamic comment UI. */
+:root { --add-bg: #dafbe1; --del-bg: #ffebe9; color-scheme: light dark; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --border: #30363d;
-    --panel: #161b22; --add-bg: #12261e; --del-bg: #2d1214; --accent: #4493f8; }
+  :root { --add-bg: #12261e; --del-bg: #2d1214; }
   .diff span[style] { color: var(--shiki-dark, inherit) !important; }
 }
-* { box-sizing: border-box; }
-body { margin: 0; font: 15px/1.55 -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px;
-  padding: 10px 20px; background: var(--bg); border-bottom: 1px solid var(--border); }
-header h1 { font-size: 16px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-header .brand { color: var(--muted); font-size: 13px; }
-#done { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 16px;
-  font-size: 14px; font-weight: 600; cursor: pointer; }
-main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 0; }
-#report { padding: 20px 28px 80px; max-width: 980px; }
-#agent { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--fg);
-  font-size: 13px; padding: 5px 8px; }
-.levels { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.levels button { background: none; border: 0; border-right: 1px solid var(--border); padding: 6px 14px;
-  font-size: 13px; color: var(--muted); cursor: pointer; }
-.levels button:last-child { border-right: 0; }
-.levels button.active { background: var(--panel); color: var(--fg); font-weight: 600; }
+.prose-x p { margin: 6px 0; }
+code { background: rgb(245 245 244 / .8); border: 1px solid rgb(214 211 209); border-radius: 4px;
+  padding: 1px 4px; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (prefers-color-scheme: dark) { code { background: rgb(28 25 23); border-color: rgb(41 37 36); } }
+.panel { display: none; } .panel.active { display: block; }
 /* Brevity levels: tldr = summary + notes; walk = + sections; full = full diff only */
 body.level-tldr section { display: none; }
 body.level-tldr section[data-ctx="Agent's notes"] { display: block; }
 body.level-tldr #fulldiff, body.level-walk #fulldiff { display: none; }
 body.level-full .panel.active, body.level-full #agent { display: none; }
-.panel { display: none; } .panel.active { display: block; }
-.tldr { padding: 12px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
-.tldr .tag { font-size: 11px; font-weight: 700; letter-spacing: .05em; color: var(--accent); }
-.tldr .prose p:first-child { margin-top: 4px; }
-.toc { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 13px; }
-.toc a { color: var(--accent); text-decoration: none; }
-section { margin-top: 26px; }
-h2 { font-size: 17px; margin: 0 0 6px; }
-.prose p { margin: 6px 0; }
-.note { margin: 6px 0 14px; font-size: 13.5px; color: var(--muted); }
-code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
-  padding: 1px 4px; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.notes { margin: 8px 0; padding-left: 20px; } .notes li { margin: 4px 0; }
-.hunk { margin: 10px 0 4px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.hunk-head { display: flex; gap: 12px; padding: 5px 12px; background: var(--panel);
-  border-bottom: 1px solid var(--border); font: 12px ui-monospace, Menlo, monospace; }
-.hunk-head .path { font-weight: 600; } .hunk-head .hh { color: var(--muted); }
+.levels button.active { background: rgb(231 229 228); color: inherit; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .levels button.active { background: rgb(41 37 36); } }
 .diff { width: 100%; border-collapse: collapse; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .diff td { padding: 0 8px; white-space: pre-wrap; word-break: break-all; vertical-align: top; }
-.diff .g { width: 1%; min-width: 34px; text-align: right; color: var(--muted); user-select: none;
+.diff .g { width: 1%; min-width: 34px; text-align: right; color: rgb(168 162 158); user-select: none;
   white-space: nowrap; word-break: normal; }
-.diff .m { width: 1%; user-select: none; color: var(--muted); }
+.diff .m { width: 1%; user-select: none; color: rgb(168 162 158); }
 .diff tr.add td { background: var(--add-bg); } .diff tr.del td { background: var(--del-bg); }
 .diff .c { position: relative; padding-left: 26px; }
 .lc { position: absolute; left: 2px; top: 1px; width: 18px; height: 18px; border-radius: 4px; border: 0;
-  background: var(--accent); color: #fff; font-size: 12px; line-height: 1; cursor: pointer;
+  background: #4f46e5; color: #fff; font-size: 12px; line-height: 1; cursor: pointer;
   opacity: 0; transition: opacity .1s; padding: 0; }
 tr:hover .lc { opacity: 1; }
-.missing { color: var(--muted); font-style: italic; }
-details { margin: 8px 0; }
-summary { cursor: pointer; padding: 6px 10px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 8px; display: flex; gap: 12px; align-items: baseline; }
-details[open] > summary { border-radius: 8px 8px 0 0; }
-summary .path { font: 12.5px ui-monospace, Menlo, monospace; font-weight: 600; flex: 1; }
-summary .stat { font-size: 12px; color: var(--muted); }
-summary .a { color: #1a7f37; } summary .d { color: #cf222e; }
-@media (prefers-color-scheme: dark) { summary .a { color: #3fb950; } summary .d { color: #f85149; } }
-aside { border-left: 1px solid var(--border); padding: 16px; position: sticky; top: 49px;
-  height: calc(100vh - 49px); overflow-y: auto; }
-aside h3 { margin: 0 0 10px; font-size: 14px; }
-.comment-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 10px; font-size: 13px; }
-.comment-card .ref { color: var(--muted); font: 11px ui-monospace, Menlo, monospace; word-break: break-all; }
-.comment-card blockquote { margin: 6px 0; padding: 4px 8px; border-left: 3px solid var(--border);
-  color: var(--muted); font: 11.5px ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all;
-  max-height: 72px; overflow: hidden; }
-.comment-card .del-c { float: right; background: none; border: 0; color: var(--muted); cursor: pointer; }
-#overall { width: 100%; min-height: 70px; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg); color: var(--fg); padding: 8px; font: inherit; font-size: 13px; resize: vertical; }
-#empty { color: var(--muted); font-size: 13px; }
-#bubble { position: absolute; display: none; z-index: 10; background: var(--accent); color: #fff; border: 0;
+.mermaid { display: flex; justify-content: center; }
+#bubble { position: absolute; display: none; z-index: 10; background: #4f46e5; color: #fff; border: 0;
   border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
-#composer { position: fixed; display: none; z-index: 20; right: 340px; bottom: 20px; width: 380px;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
-  box-shadow: 0 8px 30px rgba(0,0,0,.25); }
-#composer .ref { color: var(--muted); font: 11px ui-monospace, Menlo, monospace; margin-bottom: 6px; word-break: break-all; }
-#composer blockquote { margin: 0 0 8px; padding: 4px 8px; border-left: 3px solid var(--accent);
-  font: 11.5px ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 90px; overflow: auto; }
-#composer textarea { width: 100%; min-height: 80px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg); color: var(--fg); padding: 8px; font: inherit; font-size: 13px; resize: vertical; }
-#composer .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-#composer button { border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
-#composer .save { background: var(--accent); color: #fff; border: 0; }
-#composer .cancel { background: none; border: 1px solid var(--border); color: var(--fg); }
-#finished { display: none; padding: 80px 20px; text-align: center; }
+#composer blockquote, .comment-card blockquote { margin: 6px 0 8px; padding: 4px 8px;
+  border-left: 3px solid #4f46e5; font: 11.5px ui-monospace, Menlo, monospace;
+  white-space: pre-wrap; word-break: break-all; max-height: 90px; overflow: auto; }
+.comment-card blockquote { border-left-color: rgb(214 211 209); color: rgb(120 113 108); overflow: hidden; }
 </style>
 </head>
-<body class="level-walk">
-<header>
-  <span class="brand">semrev</span>
-  <h1>${esc(title)}</h1>
-  ${results.length > 1 ? `<select id="agent" title="Analysis by">${agentOptions}</select>` : ""}
-  <div class="levels">
-    <button data-level="tldr">TL;DR</button>
-    <button data-level="walk" class="active">Walkthrough</button>
-    <button data-level="full">Full diff</button>
+<body class="level-walk bg-stone-50 font-sans text-slate-900 dark:bg-stone-950 dark:text-stone-100">
+<header class="sticky top-0 z-20 flex items-center gap-3 border-b border-stone-200 bg-stone-50/90 px-6 py-2.5 backdrop-blur dark:border-stone-800 dark:bg-stone-950/90">
+  <span class="text-sm text-stone-400">semrev</span>
+  <h1 class="flex-1 truncate font-serif text-lg">${esc(title)}</h1>
+  ${results.length > 1 ? `<select id="agent" title="Analysis by" class="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-sm dark:border-stone-800 dark:bg-stone-900">${agentOptions}</select>` : ""}
+  <div class="levels inline-flex overflow-hidden rounded-lg border border-stone-200 text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">
+    <button data-level="tldr" class="border-r border-stone-200 px-3.5 py-1.5 dark:border-stone-800">TL;DR</button>
+    <button data-level="walk" class="active border-r border-stone-200 px-3.5 py-1.5 dark:border-stone-800">Walkthrough</button>
+    <button data-level="full" class="px-3.5 py-1.5">Full diff</button>
   </div>
-  <button id="done">Done</button>
+  <button id="done" class="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700">Done</button>
 </header>
-<main>
-  <div id="report">
+<main class="grid grid-cols-[minmax(0,1fr)_320px]">
+  <div id="report" class="max-w-4xl px-7 pb-24 pt-6">
     ${panels}
     <div id="fulldiff" data-ctx="Full diff">
       ${fullDiff}
     </div>
   </div>
-  <aside>
-    <h3>Comments</h3>
-    <div id="comments"><p id="empty">Select any text or hover a line and hit ＋ to comment.</p></div>
-    <h3>Overall</h3>
-    <textarea id="overall" placeholder="Optional overall feedback…"></textarea>
+  <aside class="sticky top-[53px] h-[calc(100vh-53px)] overflow-y-auto border-l border-stone-200 p-4 dark:border-stone-800">
+    <h3 class="mb-2 text-xs font-bold uppercase tracking-wider text-stone-400">Comments</h3>
+    <div id="comments"><p id="empty" class="text-sm text-stone-400">Select any text or hover a line and hit ＋ to comment.</p></div>
+    <h3 class="mb-2 mt-6 text-xs font-bold uppercase tracking-wider text-stone-400">Overall</h3>
+    <textarea id="overall" placeholder="Optional overall feedback…" class="min-h-[70px] w-full resize-y rounded-lg border border-stone-200 bg-white p-2 text-sm dark:border-stone-800 dark:bg-stone-900"></textarea>
   </aside>
 </main>
 <button id="bubble">💬 Comment</button>
-<div id="composer">
-  <div class="ref"></div>
+<div id="composer" class="fixed bottom-5 right-[340px] z-30 hidden w-[380px] rounded-xl border border-stone-200 bg-white p-3 shadow-2xl dark:border-stone-800 dark:bg-stone-900">
+  <div class="ref mb-1.5 font-mono text-[11px] text-stone-400 [word-break:break-all]"></div>
   <blockquote></blockquote>
-  <textarea placeholder="Write a comment… (⌘⏎ to save)"></textarea>
-  <div class="row"><button class="cancel">Cancel</button><button class="save">Save</button></div>
+  <textarea placeholder="Write a comment… (⌘⏎ to save)" class="min-h-[80px] w-full resize-y rounded-lg border border-stone-200 bg-white p-2 text-sm dark:border-stone-700 dark:bg-stone-950"></textarea>
+  <div class="mt-2 flex justify-end gap-2 text-sm">
+    <button class="cancel rounded-lg border border-stone-200 px-3 py-1 dark:border-stone-700">Cancel</button>
+    <button class="save rounded-lg bg-indigo-600 px-3 py-1 font-semibold text-white">Save</button>
+  </div>
 </div>
-<div id="finished"><h2>Review sent ✓</h2><p>Feedback was delivered back to the agent. You can close this tab.</p></div>
-<script>
+<div id="finished" class="hidden px-5 py-24 text-center">
+  <h2 class="font-serif text-2xl">Review sent ✓</h2>
+  <p class="mt-2 text-stone-500">Feedback was delivered back to the agent. You can close this tab.</p>
+</div>
+<script type="module">
+${anyDiagram ? `import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({
+  startOnLoad: false,
+  theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral",
+  securityLevel: "loose",
+});
+async function renderDiagrams() {
+  const nodes = [...document.querySelectorAll(".panel.active .mermaid:not([data-processed])")];
+  if (nodes.length) await mermaid.run({ nodes }).catch(console.error);
+}
+renderDiagrams();` : `function renderDiagrams() {}`}
+
 const comments = [];
 const $ = (s, el) => (el || document).querySelector(s);
 const multiTab = ${results.length > 1 ? "true" : "false"};
@@ -303,12 +284,14 @@ const agentSelect = $("#agent");
 if (agentSelect) agentSelect.addEventListener("change", () => {
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("active", p.dataset.panel === agentSelect.value));
+  renderDiagrams();
 });
 
 // Brevity levels
 document.querySelectorAll(".levels button").forEach(btn => btn.addEventListener("click", () => {
   document.querySelectorAll(".levels button").forEach(b => b.classList.toggle("active", b === btn));
-  document.body.className = "level-" + btn.dataset.level;
+  document.body.className = document.body.className.replace(/level-\\w+/, "level-" + btn.dataset.level);
+  renderDiagrams();
 }));
 
 function currentBackend() {
@@ -345,14 +328,17 @@ $("textarea", composer).addEventListener("keydown", e => {
 
 function renderComments() {
   const box = $("#comments");
-  if (!comments.length) { box.innerHTML = '<p id="empty">Select any text or hover a line and hit ＋ to comment.</p>'; return; }
+  if (!comments.length) { box.innerHTML = '<p id="empty" class="text-sm text-stone-400">Select any text or hover a line and hit ＋ to comment.</p>'; return; }
   box.innerHTML = "";
   comments.forEach((c, i) => {
     const card = document.createElement("div");
-    card.className = "comment-card";
-    const ref = document.createElement("div"); ref.className = "ref";
+    card.className = "comment-card mb-2.5 rounded-lg border border-stone-200 bg-white p-2.5 text-sm dark:border-stone-800 dark:bg-stone-900";
+    const ref = document.createElement("div");
+    ref.className = "font-mono text-[11px] text-stone-400 [word-break:break-all]";
     ref.textContent = (multiTab && c.backend ? "[" + c.backend + "] " : "") + c.ref;
-    const del = document.createElement("button"); del.className = "del-c"; del.textContent = "✕";
+    const del = document.createElement("button");
+    del.className = "float-right text-stone-400 hover:text-stone-600";
+    del.textContent = "✕";
     del.addEventListener("click", () => { comments.splice(i, 1); renderComments(); });
     card.append(del, ref);
     if (c.quote) { const q = document.createElement("blockquote"); q.textContent = c.quote; card.append(q); }

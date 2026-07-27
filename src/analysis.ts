@@ -3,10 +3,12 @@ import { z } from "zod";
 export const AnalysisSchema = z.object({
   title: z.string(),
   summary: z.string(),
+  diagram: z.string(),
   sections: z.array(
     z.object({
       heading: z.string(),
       intro: z.string(),
+      diagram: z.string(),
       snippets: z.array(
         z.object({
           hunk_id: z.string(),
@@ -38,10 +40,12 @@ Produce a JSON object with exactly this shape:
 {
   "title": "short title for the change",
   "summary": "1-2 sentence TL;DR: what the change does and why",
+  "diagram": "optional mermaid diagram source, or \\"\\"",
   "sections": [
     {
       "heading": "...",
       "intro": "1-2 sentences introducing this part of the change",
+      "diagram": "optional mermaid diagram source for this section, or \\"\\"",
       "snippets": [
         { "hunk_id": "h3", "from": 40, "to": 48, "note": "one short line bridging to the next snippet (or \\"\\")" }
       ]
@@ -52,6 +56,7 @@ Produce a JSON object with exactly this shape:
 
 Rules:
 - Be brief. Section intros are 1-2 sentences; snippet notes are one short line or "". No filler.
+- "diagram" (top level and per section): include a small mermaid diagram ONLY when that part of the change is genuinely graph-shaped (data flowing through new pieces, call-order changes, moved responsibilities) — a "flowchart LR" or "sequenceDiagram" with 3-8 nodes, no styling directives. The top-level diagram is a whole-change overview; a section diagram covers just that section. Use "" when a diagram would not beat prose — most small changes need none, and few sections deserve their own.
 - Snippets are EXCERPTS: pick the smallest line range that shows the interesting part (typically 3-12 lines), using the line-number prefixes. from/to use new-file numbers; for ranges of deleted lines use the old-file numbers (positive). Use null for both to include the whole hunk — only when the hunk is already small.
 - Group by code path / concern, not by file. Order sections by importance: core change first.
 - Purely mechanical changes (renames, lockfiles, formatting) need no snippet — mention them in one sentence in an intro or the summary.
