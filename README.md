@@ -17,7 +17,12 @@ Requires Node >= 20 (or [Bun](https://bun.sh)) and one backend: `ANTHROPIC_API_K
 
 ```sh
 npx semantic-review
+```
 
+
+Run it like `$ git diff`:
+
+```
 semantic-review                        # review uncommitted changes
 semantic-review main...HEAD            # review a branch
 git diff -U10 | semantic-review        # review any piped diff
@@ -27,4 +32,4 @@ semantic-review --model claude-sonnet-5 --effort medium
 
 Tell your agent (`CLAUDE.md`, `AGENTS.md`, …):
 
-> After completing a substantial change, run `semantic-review` and wait for it to exit. Its stdout is the user's review feedback — treat each comment as a change request and address it.
+> After completing a substantial change, run `npx semantic-review` and wait for it to exit. Its stdout is the user's review feedback — treat each comment as a change request and address it.
