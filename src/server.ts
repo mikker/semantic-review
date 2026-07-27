@@ -1,3 +1,6 @@
+import { createServer } from "node:http";
+import { spawn } from "node:child_process";
+
 export interface ReviewComment {
   ref: string;
   quote?: string;
@@ -15,32 +18,41 @@ export interface ReviewResult {
 // Serves the report on localhost and resolves when the reviewer clicks Done.
 export function serveReview(html: string, openBrowser: boolean): Promise<ReviewResult> {
   return new Promise((resolve) => {
-    const server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      async fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname === "/" && req.method === "GET") {
-          return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-        }
-        if (url.pathname === "/done" && req.method === "POST") {
-          const result = (await req.json()) as ReviewResult;
-          queueMicrotask(() => {
-            server.stop();
+    const server = createServer((req, res) => {
+      const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+      if (path === "/" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(html);
+        return;
+      }
+      if (path === "/done" && req.method === "POST") {
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => {
+          const result = JSON.parse(body) as ReviewResult;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }), () => {
+            server.close();
+            server.closeAllConnections();
             resolve({ comments: result.comments ?? [], overall: result.overall ?? "", notes: result.notes ?? [] });
           });
-          return Response.json({ ok: true });
-        }
-        return new Response("not found", { status: 404 });
-      },
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end("not found");
     });
 
-    const url = `http://127.0.0.1:${server.port}/`;
-    console.error(`semantic-review: review at ${url} — waiting for Done…`);
-    if (openBrowser) {
-      const opener = process.platform === "darwin" ? "open" : "xdg-open";
-      Bun.spawn([opener, url], { stdout: "ignore", stderr: "ignore" });
-    }
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as { port: number };
+      const url = `http://127.0.0.1:${port}/`;
+      console.error(`semantic-review: review at ${url} — waiting for Done…`);
+      if (openBrowser) {
+        const opener = process.platform === "darwin" ? "open" : "xdg-open";
+        spawn(opener, [url], { stdio: "ignore" }).on("error", () => {});
+      }
+    });
   });
 }
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // semantic-review — semantic diff review.
 // Reads a git diff (stdin or `git diff` args), asks an LLM backend for a
 // narrative report, serves it for human review, and prints the feedback to
@@ -8,6 +8,7 @@ import { parseDiff, diffForModel } from "./diff";
 import { resolveBackends, runBackends, BACKENDS } from "./backends";
 import { renderReport } from "./render";
 import { serveReview, formatReview } from "./server";
+import { run } from "./proc";
 
 const USAGE = `usage: semantic-review [options] [git diff args...]
 
@@ -30,18 +31,14 @@ examples:
 
 async function getDiff(gitArgs: string[]): Promise<string> {
   if (!process.stdin.isTTY) {
-    const piped = await Bun.stdin.text();
+    let piped = "";
+    for await (const chunk of process.stdin.setEncoding("utf8")) piped += chunk;
     if (piped.trim()) return piped;
   }
   const args = gitArgs.length > 0 ? gitArgs : ["HEAD"];
-  const proc = Bun.spawn(["git", "diff", "--no-color", ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0) throw new Error(`git diff failed: ${err.trim()}`);
-  return out;
+  const { stdout, stderr, code } = await run(["git", "diff", "--no-color", ...args]);
+  if (code !== 0) throw new Error(`git diff failed: ${stderr.trim()}`);
+  return stdout;
 }
 
 async function main() {

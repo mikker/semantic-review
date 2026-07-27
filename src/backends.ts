@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { AnalysisSchema, analysisPrompt, extractAnalysis, type Analysis, type AnalysisResult } from "./analysis";
+import { run } from "./proc";
 
 export interface AnalyzeOpts {
   model?: string; // passed through to the backend; each CLI has its own model names
@@ -14,8 +15,8 @@ export interface Backend {
 }
 
 function haveCommand(cmd: string): Promise<boolean> {
-  return Bun.$`command -v ${cmd}`.quiet().then(
-    () => true,
+  return run(["sh", "-c", `command -v ${cmd}`]).then(
+    ({ code }) => code === 0,
     () => false,
   );
 }
@@ -28,16 +29,9 @@ function cliBackend(name: string, argv: (opts: AnalyzeOpts) => string[]): Backen
     name,
     available: () => haveCommand(argv({})[0]),
     async analyze(annotatedDiff, opts) {
-      const proc = Bun.spawn(argv(opts), { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-      proc.stdin.write(analysisPrompt(annotatedDiff));
-      proc.stdin.end();
-      const [out, err, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      if (code !== 0) throw new Error(`${name} exited ${code}: ${err.slice(0, 500)}`);
-      return extractAnalysis(out);
+      const { stdout, stderr, code } = await run(argv(opts), analysisPrompt(annotatedDiff));
+      if (code !== 0) throw new Error(`${name} exited ${code}: ${stderr.slice(0, 500)}`);
+      return extractAnalysis(stdout);
     },
   };
 }

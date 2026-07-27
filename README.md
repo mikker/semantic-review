@@ -13,10 +13,10 @@ agent runs `semantic-review` ──► LLM analyzes the diff ──► browser o
 agent reads stdout ◄── plaintext feedback ◄── human comments, clicks Done
 ```
 
-Requires [Bun](https://bun.sh) and one backend: `ANTHROPIC_API_KEY`, or an installed `claude`, `codex`, `gemini`, or `pi` CLI.
+Requires Node >= 20 (or [Bun](https://bun.sh)) and one backend: `ANTHROPIC_API_KEY`, or an installed `claude`, `codex`, `gemini`, or `pi` CLI.
 
 ```sh
-bun install
+npx semantic-review
 
 semantic-review                        # review uncommitted changes
 semantic-review main...HEAD            # review a branch
