@@ -1,10 +1,10 @@
 {
-  "name": "semrev",
+  "name": "semantic-review",
   "version": "0.1.0",
   "description": "Semantic diff review for coding agents: an LLM turns a git diff into a narrative HTML report, a human comments on it, and the feedback comes back as plaintext.",
   "type": "module",
   "bin": {
-    "semrev": "src/cli.ts"
+    "semantic-review": "src/cli.ts"
   },
   "scripts": {
     "test": "bun test",

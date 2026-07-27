@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// semrev — semantic diff review.
+// semantic-review — semantic diff review.
 // Reads a git diff (stdin or `git diff` args), asks an LLM backend for a
 // narrative report, serves it for human review, and prints the feedback to
 // stdout when the reviewer clicks Done.
@@ -9,7 +9,7 @@ import { resolveBackends, runBackends, BACKENDS } from "./backends";
 import { renderReport } from "./render";
 import { serveReview, formatReview } from "./server";
 
-const USAGE = `usage: semrev [options] [git diff args...]
+const USAGE = `usage: semantic-review [options] [git diff args...]
 
 Reads the diff from stdin if piped, otherwise runs \`git diff <args>\`
 (default: git diff HEAD). Prints the human's review feedback to stdout.
@@ -17,16 +17,16 @@ Reads the diff from stdin if piped, otherwise runs \`git diff <args>\`
 options:
   --with <backend,...>   backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
   --model <id>           model for the anthropic backend (default: claude-opus-5,
-                         env SEMREV_MODEL; e.g. claude-sonnet-5, claude-haiku-4-5)
+                         env SEMANTIC_REVIEW_MODEL; e.g. claude-sonnet-5, claude-haiku-4-5)
   --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
   --no-open              don't open the browser
 
 examples:
-  semrev                      review uncommitted changes
-  semrev main...HEAD          review a branch
-  git diff -U10 | semrev      review a piped diff with more context
-  semrev --with anthropic,codex   two analyses, tabbed
-  semrev --model claude-sonnet-5 --effort medium   cheaper/faster analysis`;
+  semantic-review                      review uncommitted changes
+  semantic-review main...HEAD          review a branch
+  git diff -U10 | semantic-review      review a piped diff with more context
+  semantic-review --with anthropic,codex   two analyses, tabbed
+  semantic-review --model claude-sonnet-5 --effort medium   cheaper/faster analysis`;
 
 async function getDiff(gitArgs: string[]): Promise<string> {
   if (!process.stdin.isTTY) {
@@ -78,13 +78,13 @@ async function main() {
   const files = parseDiff(diff);
   const hunkCount = files.reduce((n, f) => n + f.hunks.length, 0);
   if (hunkCount === 0) {
-    console.error("semrev: no changes to review");
+    console.error("semantic-review: no changes to review");
     process.exit(1);
   }
 
   const backends = await resolveBackends(withBackends);
   console.error(
-    `semrev: analyzing ${hunkCount} hunk${hunkCount === 1 ? "" : "s"} across ${files.length} file${files.length === 1 ? "" : "s"} with ${backends.map((b) => b.name).join(", ")}…`,
+    `semantic-review: analyzing ${hunkCount} hunk${hunkCount === 1 ? "" : "s"} across ${files.length} file${files.length === 1 ? "" : "s"} with ${backends.map((b) => b.name).join(", ")}…`,
   );
 
   const annotated = diffForModel(files);
@@ -96,6 +96,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`semrev: ${err.message ?? err}`);
+  console.error(`semantic-review: ${err.message ?? err}`);
   process.exit(1);
 });

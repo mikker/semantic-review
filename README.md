@@ -1,11 +1,11 @@
-# semrev
+# semantic-review
 
 Semantic diff review for coding agents.
 
-A traditional `git diff` lists files alphabetically and makes you reconstruct the story yourself. `semrev` has an LLM read the diff and reorganize it into a narrative: what the change does, grouped by code path and ordered by importance, with the relevant hunks embedded inline — syntax highlighted, selectable, and commentable. When the human reviewer clicks **Done**, their comments are printed to stdout as plaintext, ready to be read directly by the agent that invoked it.
+A traditional `git diff` lists files alphabetically and makes you reconstruct the story yourself. `semantic-review` has an LLM read the diff and reorganize it into a narrative: what the change does, grouped by code path and ordered by importance, with the relevant hunks embedded inline — syntax highlighted, selectable, and commentable. When the human reviewer clicks **Done**, their comments are printed to stdout as plaintext, ready to be read directly by the agent that invoked it.
 
 ```
-agent runs `semrev` ──► LLM analyzes the diff ──► browser opens the report
+agent runs `semantic-review` ──► LLM analyzes the diff ──► browser opens the report
                                                         │
 agent reads stdout ◄── plaintext feedback ◄── human comments, clicks Done
 ```
@@ -22,22 +22,22 @@ agent reads stdout ◄── plaintext feedback ◄── human comments, clicks
 ```sh
 bun install
 
-semrev                        # review uncommitted changes (git diff HEAD)
-semrev main...HEAD            # review a branch
-git diff -U10 | semrev        # review any piped diff
-semrev --with anthropic,codex # multiple analyses, presented as tabs
-semrev --no-open              # don't auto-open the browser
+semantic-review                        # review uncommitted changes (git diff HEAD)
+semantic-review main...HEAD            # review a branch
+git diff -U10 | semantic-review        # review any piped diff
+semantic-review --with anthropic,codex # multiple analyses, presented as tabs
+semantic-review --no-open              # don't auto-open the browser
 ```
 
 The command blocks while the review is open in the browser. Stderr carries status (including the local URL); stdout carries only the final plaintext feedback.
 
 ## Backends
 
-`semrev` is agent-agnostic. The analysis can come from:
+`semantic-review` is agent-agnostic. The analysis can come from:
 
 | Backend     | How it runs                                     |
 | ----------- | ----------------------------------------------- |
-| `anthropic` | Anthropic API directly (`claude-opus-5`, override with `SEMREV_MODEL`) |
+| `anthropic` | Anthropic API directly (`claude-opus-5`, override with `SEMANTIC_REVIEW_MODEL`) |
 | `claude`    | `claude -p` (Claude Code CLI, its own auth)     |
 | `codex`     | `codex exec` (Codex CLI, its own auth)          |
 | `gemini`    | `gemini` (Gemini CLI, its own auth)             |
@@ -48,7 +48,7 @@ With no `--with` flag, the first available backend is used. With several (`--wit
 
 Add something like this to your agent instructions (`CLAUDE.md`, `AGENTS.md`, …):
 
-> After completing a substantial change, run `semrev` and wait for it to exit. It opens a review in the user's browser and blocks until they finish. Its stdout is the user's review feedback — treat each comment as a change request and address it.
+> After completing a substantial change, run `semantic-review` and wait for it to exit. It opens a review in the user's browser and blocks until they finish. Its stdout is the user's review feedback — treat each comment as a change request and address it.
 
 ## Review feedback format
 

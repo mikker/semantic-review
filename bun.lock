@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "semrev",
+      "name": "semantic-review",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.74.0",
         "shiki": "^3.13.0",

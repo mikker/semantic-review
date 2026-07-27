@@ -48,7 +48,7 @@ const anthropicBackend: Backend = {
   async analyze(annotatedDiff, opts) {
     const client = new Anthropic();
     const stream = client.messages.stream({
-      model: opts.model || process.env.SEMREV_MODEL || "claude-opus-5",
+      model: opts.model || process.env.SEMANTIC_REVIEW_MODEL || "claude-opus-5",
       max_tokens: 32000,
       output_config: {
         format: zodOutputFormat(AnalysisSchema),
@@ -103,7 +103,7 @@ export async function runBackends(
   for (let i = 0; i < settled.length; i++) {
     const s = settled[i];
     if (s.status === "fulfilled") results.push(s.value);
-    else console.error(`semrev: backend ${backends[i].name} failed: ${s.reason?.message ?? s.reason}`);
+    else console.error(`semantic-review: backend ${backends[i].name} failed: ${s.reason?.message ?? s.reason}`);
   }
   if (results.length === 0) throw new Error("all backends failed");
   return results;

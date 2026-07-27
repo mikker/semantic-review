@@ -36,7 +36,7 @@ export function serveReview(html: string, openBrowser: boolean): Promise<ReviewR
     });
 
     const url = `http://127.0.0.1:${server.port}/`;
-    console.error(`semrev: review at ${url} — waiting for Done…`);
+    console.error(`semantic-review: review at ${url} — waiting for Done…`);
     if (openBrowser) {
       const opener = process.platform === "darwin" ? "open" : "xdg-open";
       Bun.spawn([opener, url], { stdout: "ignore", stderr: "ignore" });

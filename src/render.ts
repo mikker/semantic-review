@@ -185,7 +185,7 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} — semrev</title>
+<title>${esc(title)} — semantic-review</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
 /* Custom layer for what Tailwind doesn't cover cleanly: diff tables, shiki
@@ -229,7 +229,7 @@ tr:hover .lc { opacity: 1; }
 </head>
 <body class="level-walk bg-stone-50 font-sans text-slate-900 dark:bg-stone-950 dark:text-stone-100">
 <header class="sticky top-0 z-20 flex items-center gap-3 border-b border-stone-200 bg-stone-50/90 px-6 py-2.5 backdrop-blur dark:border-stone-800 dark:bg-stone-950/90">
-  <span class="text-sm text-stone-400">semrev</span>
+  <span class="text-sm text-stone-400">semantic-review</span>
   <h1 class="flex-1 truncate font-serif text-lg">${esc(title)}</h1>
   ${results.length > 1 ? `<select id="agent" title="Analysis by" class="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-sm dark:border-stone-800 dark:bg-stone-900">${agentOptions}</select>` : ""}
   <div class="levels inline-flex overflow-hidden rounded-lg border border-stone-200 text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">
