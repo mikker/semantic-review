@@ -7,6 +7,8 @@
     "semrev": "src/cli.ts"
   },
   "scripts": {
+    "test": "bun test",
+    "eval": "bun evals/run.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {

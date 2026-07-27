@@ -3,7 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { AnalysisSchema, analysisPrompt, extractAnalysis, type Analysis, type AnalysisResult } from "./analysis";
 
 export interface AnalyzeOpts {
-  model?: string; // anthropic backend only; agent CLIs use their own configured model
+  model?: string; // passed through to the backend; each CLI has its own model names
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
 }
 
@@ -20,14 +20,15 @@ function haveCommand(cmd: string): Promise<boolean> {
   );
 }
 
-// Agent CLIs run in non-interactive mode with the prompt on stdin/argv and are
+// Agent CLIs run in non-interactive mode with the prompt on stdin and are
 // asked to print JSON only. They use whatever auth the user already has.
-function cliBackend(name: string, argv: string[]): Backend {
+// argv is built per call so --model can map to each CLI's own flag.
+function cliBackend(name: string, argv: (opts: AnalyzeOpts) => string[]): Backend {
   return {
     name,
-    available: () => haveCommand(argv[0]),
-    async analyze(annotatedDiff) {
-      const proc = Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    available: () => haveCommand(argv({})[0]),
+    async analyze(annotatedDiff, opts) {
+      const proc = Bun.spawn(argv(opts), { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
       proc.stdin.write(analysisPrompt(annotatedDiff));
       proc.stdin.end();
       const [out, err, code] = await Promise.all([
@@ -63,11 +64,14 @@ const anthropicBackend: Backend = {
   },
 };
 
+const modelFlag = (o: AnalyzeOpts, flag = "--model") => (o.model ? [flag, o.model] : []);
+
 export const BACKENDS: Record<string, Backend> = {
   anthropic: anthropicBackend,
-  claude: cliBackend("claude", ["claude", "-p"]),
-  codex: cliBackend("codex", ["codex", "exec", "--skip-git-repo-check", "-"]),
-  gemini: cliBackend("gemini", ["gemini"]),
+  claude: cliBackend("claude", (o) => ["claude", "-p", ...modelFlag(o)]),
+  codex: cliBackend("codex", (o) => ["codex", "exec", "--skip-git-repo-check", ...modelFlag(o, "-m"), "-"]),
+  gemini: cliBackend("gemini", (o) => ["gemini", ...modelFlag(o)]),
+  pi: cliBackend("pi", (o) => ["pi", "-p", "--no-session", "--no-tools", ...modelFlag(o)]),
 };
 
 export async function resolveBackends(requested: string[] | null): Promise<Backend[]> {

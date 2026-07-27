@@ -1,0 +1,454 @@
+diff --git a/src/analysis.ts b/src/analysis.ts
+index aae9d6e..061cf4c 100644
+--- a/src/analysis.ts
++++ b/src/analysis.ts
+@@ -6,8 +6,15 @@ export const AnalysisSchema = z.object({
+   sections: z.array(
+     z.object({
+       heading: z.string(),
+-      prose: z.string(),
+-      hunk_ids: z.array(z.string()),
++      intro: z.string(),
++      snippets: z.array(
++        z.object({
++          hunk_id: z.string(),
++          from: z.number().nullable(),
++          to: z.number().nullable(),
++          note: z.string(),
++        }),
++      ),
+     }),
+   ),
+   notes: z.array(z.string()),
+@@ -22,24 +29,34 @@ export interface AnalysisResult {
+ }
+ 
+ export function analysisPrompt(annotatedDiff: string): string {
+-  return `You are writing a semantic review guide for a git diff. Traditional diffs list files alphabetically; your job is to reorganize the change into a narrative a reviewer can actually follow.
++  return `You are writing a short semantic review guide for a git diff. Traditional diffs list files alphabetically; your job is to reorganize the change into a brief narrative a reviewer can follow in a minute or two. The reviewer also has the full diff available below your guide, so you do NOT need to show everything — show only the lines that carry the meaning of the change.
+ 
+-Each hunk below is labeled with an id like "hunk h3". Produce a JSON object with exactly this shape:
++Each hunk is labeled "hunk hN". Every line is prefixed with its line number in the new file ("42|+code"); deleted lines carry the old-file number prefixed with a minus ("-17|-code").
++
++Produce a JSON object with exactly this shape:
+ 
+ {
+   "title": "short title for the change",
+-  "summary": "2-4 sentence overview: what the change does and why, as far as it can be inferred",
++  "summary": "1-2 sentence TL;DR: what the change does and why",
+   "sections": [
+-    { "heading": "...", "prose": "...", "hunk_ids": ["h1", "h4"] }
++    {
++      "heading": "...",
++      "intro": "1-2 sentences introducing this part of the change",
++      "snippets": [
++        { "hunk_id": "h3", "from": 40, "to": 48, "note": "one short line bridging to the next snippet (or \\"\\")" }
++      ]
++    }
+   ],
+-  "notes": ["risks, smells, or observations worth a reviewer's attention", ...]
++  "notes": ["risks or things a reviewer should double-check", ...]
+ }
+ 
+ Rules:
+-- Group hunks by code path / concern, not by file. Order sections by importance: the core change first, then supporting changes, then mechanical/chore changes.
+-- Every hunk id must appear in at least one section. A hunk may appear in more than one if it is genuinely relevant to both.
+-- Prose explains what the code does and why, naming the functions/types involved. Use backticks for identifiers. Plain text otherwise, no markdown headings.
+-- "notes" is for things a reviewer should double-check: behavior changes, missing tests, edge cases, inconsistencies. Empty array if none.
++- Be brief. Section intros are 1-2 sentences; snippet notes are one short line or "". No filler.
++- Snippets are EXCERPTS: pick the smallest line range that shows the interesting part (typically 3-12 lines), using the line-number prefixes. from/to use new-file numbers; for ranges of deleted lines use the old-file numbers (positive). Use null for both to include the whole hunk — only when the hunk is already small.
++- Group by code path / concern, not by file. Order sections by importance: core change first.
++- Purely mechanical changes (renames, lockfiles, formatting) need no snippet — mention them in one sentence in an intro or the summary.
++- Prose is plain text; use backticks for identifiers. No markdown headings.
++- "notes" is for behavior changes, missing tests, edge cases, inconsistencies. Empty array if none.
+ - Respond with ONLY the JSON object, no fences, no commentary.
+ 
+ The diff:
+diff --git a/src/backends.ts b/src/backends.ts
+index 709906d..e714af4 100644
+--- a/src/backends.ts
++++ b/src/backends.ts
+@@ -2,10 +2,15 @@ import Anthropic from "@anthropic-ai/sdk";
+ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+ import { AnalysisSchema, analysisPrompt, extractAnalysis, type Analysis, type AnalysisResult } from "./analysis";
+ 
++export interface AnalyzeOpts {
++  model?: string; // anthropic backend only; agent CLIs use their own configured model
++  effort?: "low" | "medium" | "high" | "xhigh" | "max";
++}
++
+ export interface Backend {
+   name: string;
+   available(): Promise<boolean>;
+-  analyze(annotatedDiff: string): Promise<Analysis>;
++  analyze(annotatedDiff: string, opts: AnalyzeOpts): Promise<Analysis>;
+ }
+ 
+ function haveCommand(cmd: string): Promise<boolean> {
+@@ -39,12 +44,16 @@ function cliBackend(name: string, argv: string[]): Backend {
+ const anthropicBackend: Backend = {
+   name: "anthropic",
+   available: async () => !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+-  async analyze(annotatedDiff) {
++  async analyze(annotatedDiff, opts) {
+     const client = new Anthropic();
+     const stream = client.messages.stream({
+-      model: process.env.SEMREV_MODEL || "claude-opus-5",
++      model: opts.model || process.env.SEMREV_MODEL || "claude-opus-5",
+       max_tokens: 32000,
+-      output_config: { format: zodOutputFormat(AnalysisSchema) },
++      output_config: {
++        format: zodOutputFormat(AnalysisSchema),
++        // SDK typings lag the API: "xhigh" is valid but missing from the union.
++        ...(opts.effort ? { effort: opts.effort as "high" } : {}),
++      },
+       messages: [{ role: "user", content: analysisPrompt(annotatedDiff) }],
+     });
+     const message = await stream.finalMessage();
+@@ -78,9 +87,13 @@ export async function resolveBackends(requested: string[] | null): Promise<Backe
+   );
+ }
+ 
+-export async function runBackends(backends: Backend[], annotatedDiff: string): Promise<AnalysisResult[]> {
++export async function runBackends(
++  backends: Backend[],
++  annotatedDiff: string,
++  opts: AnalyzeOpts = {},
++): Promise<AnalysisResult[]> {
+   const settled = await Promise.allSettled(
+-    backends.map(async (b) => ({ backend: b.name, analysis: await b.analyze(annotatedDiff) })),
++    backends.map(async (b) => ({ backend: b.name, analysis: await b.analyze(annotatedDiff, opts) })),
+   );
+   const results: AnalysisResult[] = [];
+   for (let i = 0; i < settled.length; i++) {
+diff --git a/src/cli.ts b/src/cli.ts
+index dd96422..22e7511 100755
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -9,18 +9,24 @@ import { resolveBackends, runBackends, BACKENDS } from "./backends";
+ import { renderReport } from "./render";
+ import { serveReview, formatReview } from "./server";
+ 
+-const USAGE = `usage: semrev [--with <backend,...>] [--no-open] [git diff args...]
++const USAGE = `usage: semrev [options] [git diff args...]
+ 
+ Reads the diff from stdin if piped, otherwise runs \`git diff <args>\`
+ (default: git diff HEAD). Prints the human's review feedback to stdout.
+ 
+-backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
++options:
++  --with <backend,...>   backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
++  --model <id>           model for the anthropic backend (default: claude-opus-5,
++                         env SEMREV_MODEL; e.g. claude-sonnet-5, claude-haiku-4-5)
++  --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
++  --no-open              don't open the browser
+ 
+ examples:
+   semrev                      review uncommitted changes
+   semrev main...HEAD          review a branch
+   git diff -U10 | semrev      review a piped diff with more context
+-  semrev --with anthropic,codex   two analyses, tabbed`;
++  semrev --with anthropic,codex   two analyses, tabbed
++  semrev --model claude-sonnet-5 --effort medium   cheaper/faster analysis`;
+ 
+ async function getDiff(gitArgs: string[]): Promise<string> {
+   if (!process.stdin.isTTY) {
+@@ -43,6 +49,8 @@ async function main() {
+   const gitArgs: string[] = [];
+   let withBackends: string[] | null = null;
+   let openBrowser = true;
++  let model: string | undefined;
++  let effort: "low" | "medium" | "high" | "xhigh" | "max" | undefined;
+ 
+   for (let i = 0; i < argv.length; i++) {
+     const arg = argv[i];
+@@ -53,6 +61,14 @@ async function main() {
+       openBrowser = false;
+     } else if (arg === "--with") {
+       withBackends = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
++    } else if (arg === "--model") {
++      model = argv[++i];
++    } else if (arg === "--effort") {
++      const level = argv[++i];
++      if (!["low", "medium", "high", "xhigh", "max"].includes(level ?? "")) {
++        throw new Error(`invalid --effort "${level}" (low|medium|high|xhigh|max)`);
++      }
++      effort = level as typeof effort;
+     } else {
+       gitArgs.push(arg);
+     }
+@@ -72,7 +88,7 @@ async function main() {
+   );
+ 
+   const annotated = diffForModel(files);
+-  const results = await runBackends(backends, annotated);
++  const results = await runBackends(backends, annotated, { model, effort });
+   const html = await renderReport(results, files);
+   const review = await serveReview(html, openBrowser);
+ 
+diff --git a/src/diff.ts b/src/diff.ts
+index 4be2d23..e27c794 100644
+--- a/src/diff.ts
++++ b/src/diff.ts
+@@ -89,7 +89,11 @@ export function diffForModel(files: DiffFile[]): string {
+       parts.push(`### hunk ${hunk.id} — ${file.path} (${file.status}) ${hunk.header}`);
+       parts.push(
+         hunk.lines
+-          .map((l) => (l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ") + l.text)
++          .map((l) => {
++            const no = l.newNo != null ? `${l.newNo}` : `-${l.oldNo}`;
++            const sign = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ";
++            return `${no}|${sign}${l.text}`;
++          })
+           .join("\n"),
+       );
+     }
+diff --git a/src/render.ts b/src/render.ts
+index 122bd7d..d12e5fd 100644
+--- a/src/render.ts
++++ b/src/render.ts
+@@ -38,7 +38,13 @@ function tokenStyle(token: { htmlStyle?: string | Record<string, string>; color?
+   return token.color ? `color:${token.color}` : "";
+ }
+ 
+-function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk): string {
++interface LineRange {
++  from: number;
++  to: number;
++}
++
++// Renders a hunk (or an excerpt of it) as a highlighted, commentable diff table.
++function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk, range?: LineRange | null): string {
+   const lang = langFor(file.path);
+   const code = hunk.lines.map((l) => l.text).join("\n");
+   let tokenLines: { htmlStyle?: string | Record<string, string>; color?: string; content: string }[][];
+@@ -51,7 +57,16 @@ function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk): string {
+     tokenLines = hunk.lines.map((l) => [{ content: l.text }]);
+   }
+ 
+-  const rows = hunk.lines.map((line, i) => {
++  let indices = hunk.lines.map((_, i) => i);
++  if (range) {
++    const within = (n: number | null) => n != null && n >= range.from && n <= range.to;
++    const sliced = indices.filter((i) => within(hunk.lines[i].newNo) || within(hunk.lines[i].oldNo));
++    if (sliced.length > 0) indices = sliced;
++  }
++  const elided = indices.length < hunk.lines.length;
++
++  const rows = indices.map((i) => {
++    const line = hunk.lines[i];
+     const tokens = tokenLines[i] ?? [{ content: line.text }];
+     const codeHtml =
+       tokens.map((t) => `<span style="${esc(tokenStyle(t))}">${esc(t.content)}</span>`).join("") || "&nbsp;";
+@@ -63,8 +78,10 @@ function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk): string {
+     </tr>`;
+   });
+ 
+-  return `<div class="hunk" id="${hunk.id}">
+-    <div class="hunk-head"><span class="path">${esc(file.path)}</span><span class="hh">${esc(hunk.header)}</span></div>
++  return `<div class="hunk">
++    <div class="hunk-head"><span class="path">${esc(file.path)}</span><span class="hh">${esc(
++      elided ? `excerpt · ${hunk.header}` : hunk.header,
++    )}</span></div>
+     <table class="diff"><tbody>${rows.join("")}</tbody></table>
+   </div>`;
+ }
+@@ -73,39 +90,68 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
+   const langs = [...new Set(files.map((f) => langFor(f.path)).filter((l) => l !== "text"))];
+   const hl = await createHighlighter({ themes: ["github-light", "github-dark"], langs });
+   const hunks = hunkById(files);
+-  const hunkHtml = new Map<string, string>();
+-  for (const [id, { file, hunk }] of hunks) hunkHtml.set(id, renderHunk(hl, file, hunk));
+ 
+-  const tabs = results
+-    .map(
+-      (r, i) =>
+-        `<button class="tab${i === 0 ? " active" : ""}" data-tab="${i}">${esc(r.backend)}</button>`,
+-    )
++  const agentOptions = results
++    .map((r, i) => `<option value="${i}">${esc(r.backend)}</option>`)
+     .join("");
+ 
+   const panels = results
+     .map((r, i) => {
++      const toc = r.analysis.sections
++        .map((s, si) => `<a href="#p${i}s${si}">${esc(s.heading)}</a>`)
++        .join("");
+       const sections = r.analysis.sections
+-        .map(
+-          (s, si) => `<section data-ctx="${esc(s.heading)}">
++        .map((s, si) => {
++          const snippets = s.snippets
++            .map((sn) => {
++              const found = hunks.get(sn.hunk_id);
++              if (!found) return `<p class="missing">unknown hunk ${esc(sn.hunk_id)}</p>`;
++              const range = sn.from != null && sn.to != null ? { from: sn.from, to: sn.to } : null;
++              const note = sn.note.trim() ? `<p class="note">${esc(sn.note).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>` : "";
++              return renderHunk(hl, found.file, found.hunk, range) + note;
++            })
++            .join("");
++          return `<section id="p${i}s${si}" data-ctx="${esc(s.heading)}">
+             <h2>${esc(s.heading)}</h2>
+-            <div class="prose">${prose(s.prose)}</div>
+-            ${s.hunk_ids.map((id) => hunkHtml.get(id) ?? `<p class="missing">unknown hunk ${esc(id)}</p>`).join("")}
+-          </section>`,
+-        )
++            <div class="prose">${prose(s.intro)}</div>
++            ${snippets}
++          </section>`;
++        })
+         .join("");
+       const notes = r.analysis.notes.length
+-        ? `<section data-ctx="Reviewer notes"><h2>Reviewer notes</h2><ul class="notes">${r.analysis.notes
++        ? `<section data-ctx="Agent's notes"><h2>Agent&#8217;s notes</h2><ul class="notes">${r.analysis.notes
+             .map((n) => `<li>${esc(n).replace(/`([^`]+)`/g, "<code>$1</code>")}</li>`)
+             .join("")}</ul></section>`
+         : "";
+       return `<div class="panel${i === 0 ? " active" : ""}" data-panel="${i}" data-backend="${esc(r.backend)}">
+-        <div class="summary prose" data-ctx="Summary">${prose(r.analysis.summary)}</div>
++        <div class="tldr" data-ctx="TL;DR">
++          <span class="tag">TL;DR</span>
++          <div class="prose">${prose(r.analysis.summary)}</div>
++          ${r.analysis.sections.length > 1 ? `<nav class="toc">${toc}</nav>` : ""}
++        </div>
+         ${sections}${notes}
+       </div>`;
+     })
+     .join("");
+ 
++  // Full diff tier: every file, every hunk, collapsed per file. Shared across tabs.
++  const fullDiff = files
++    .map((file) => {
++      const adds = file.hunks.reduce((n, h) => n + h.lines.filter((l) => l.kind === "add").length, 0);
++      const dels = file.hunks.reduce((n, h) => n + h.lines.filter((l) => l.kind === "del").length, 0);
++      const body =
++        file.status === "binary"
++          ? `<p class="missing">binary file</p>`
++          : file.hunks.map((h) => renderHunk(hl, file, h)).join("");
++      return `<details data-ctx="Full diff: ${esc(file.path)}">
++        <summary><span class="path">${esc(file.path)}</span><span class="stat"><b class="a">+${adds}</b> <b class="d">−${dels}</b>${
++          file.status !== "modified" ? ` · ${file.status}` : ""
++        }</span></summary>
++        ${body}
++      </details>`;
++    })
++    .join("");
++
+   const title = results[0].analysis.title;
+ 
+   return `<!doctype html>
+@@ -135,25 +181,39 @@ header .brand { color: var(--muted); font-size: 13px; }
+   font-size: 14px; font-weight: 600; cursor: pointer; }
+ main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 0; }
+ #report { padding: 20px 28px 80px; max-width: 980px; }
+-.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+-.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px;
+-  font-size: 14px; color: var(--muted); cursor: pointer; }
+-.tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
++#agent { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--fg);
++  font-size: 13px; padding: 5px 8px; }
++.levels { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
++.levels button { background: none; border: 0; border-right: 1px solid var(--border); padding: 6px 14px;
++  font-size: 13px; color: var(--muted); cursor: pointer; }
++.levels button:last-child { border-right: 0; }
++.levels button.active { background: var(--panel); color: var(--fg); font-weight: 600; }
++/* Brevity levels: tldr = summary + notes; walk = + sections; full = full diff only */
++body.level-tldr section { display: none; }
++body.level-tldr section[data-ctx="Agent's notes"] { display: block; }
++body.level-tldr #fulldiff, body.level-walk #fulldiff { display: none; }
++body.level-full .panel.active, body.level-full #agent { display: none; }
+ .panel { display: none; } .panel.active { display: block; }
+-.summary { padding: 12px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+-section { margin-top: 28px; }
+-h2 { font-size: 17px; margin: 0 0 8px; }
+-.prose p { margin: 8px 0; }
++.tldr { padding: 12px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
++.tldr .tag { font-size: 11px; font-weight: 700; letter-spacing: .05em; color: var(--accent); }
++.tldr .prose p:first-child { margin-top: 4px; }
++.toc { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 13px; }
++.toc a { color: var(--accent); text-decoration: none; }
++section { margin-top: 26px; }
++h2 { font-size: 17px; margin: 0 0 6px; }
++.prose p { margin: 6px 0; }
++.note { margin: 6px 0 14px; font-size: 13.5px; color: var(--muted); }
+ code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+   padding: 1px 4px; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+ .notes { margin: 8px 0; padding-left: 20px; } .notes li { margin: 4px 0; }
+-.hunk { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+-.hunk-head { display: flex; gap: 12px; padding: 6px 12px; background: var(--panel);
++.hunk { margin: 10px 0 4px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
++.hunk-head { display: flex; gap: 12px; padding: 5px 12px; background: var(--panel);
+   border-bottom: 1px solid var(--border); font: 12px ui-monospace, Menlo, monospace; }
+ .hunk-head .path { font-weight: 600; } .hunk-head .hh { color: var(--muted); }
+ .diff { width: 100%; border-collapse: collapse; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+ .diff td { padding: 0 8px; white-space: pre-wrap; word-break: break-all; vertical-align: top; }
+-.diff .g { width: 1%; min-width: 34px; text-align: right; color: var(--muted); user-select: none; }
++.diff .g { width: 1%; min-width: 34px; text-align: right; color: var(--muted); user-select: none;
++  white-space: nowrap; word-break: normal; }
+ .diff .m { width: 1%; user-select: none; color: var(--muted); }
+ .diff tr.add td { background: var(--add-bg); } .diff tr.del td { background: var(--del-bg); }
+ .diff .c { position: relative; padding-left: 26px; }
+@@ -162,6 +222,14 @@ code { background: var(--panel); border: 1px solid var(--border); border-radius:
+   opacity: 0; transition: opacity .1s; padding: 0; }
+ tr:hover .lc { opacity: 1; }
+ .missing { color: var(--muted); font-style: italic; }
++details { margin: 8px 0; }
++summary { cursor: pointer; padding: 6px 10px; background: var(--panel); border: 1px solid var(--border);
++  border-radius: 8px; display: flex; gap: 12px; align-items: baseline; }
++details[open] > summary { border-radius: 8px 8px 0 0; }
++summary .path { font: 12.5px ui-monospace, Menlo, monospace; font-weight: 600; flex: 1; }
++summary .stat { font-size: 12px; color: var(--muted); }
++summary .a { color: #1a7f37; } summary .d { color: #cf222e; }
++@media (prefers-color-scheme: dark) { summary .a { color: #3fb950; } summary .d { color: #f85149; } }
+ aside { border-left: 1px solid var(--border); padding: 16px; position: sticky; top: 49px;
+   height: calc(100vh - 49px); overflow-y: auto; }
+ aside h3 { margin: 0 0 10px; font-size: 14px; }
+@@ -191,16 +259,24 @@ aside h3 { margin: 0 0 10px; font-size: 14px; }
+ #finished { display: none; padding: 80px 20px; text-align: center; }
+ </style>
+ </head>
+-<body>
++<body class="level-walk">
+ <header>
+   <span class="brand">semrev</span>
+   <h1>${esc(title)}</h1>
++  ${results.length > 1 ? `<select id="agent" title="Analysis by">${agentOptions}</select>` : ""}
++  <div class="levels">
++    <button data-level="tldr">TL;DR</button>
++    <button data-level="walk" class="active">Walkthrough</button>
++    <button data-level="full">Full diff</button>
++  </div>
+   <button id="done">Done</button>
+ </header>
+ <main>
+   <div id="report">
+-    ${results.length > 1 ? `<div class="tabs">${tabs}</div>` : ""}
+     ${panels}
++    <div id="fulldiff" data-ctx="Full diff">
++      ${fullDiff}
++    </div>
+   </div>
+   <aside>
+     <h3>Comments</h3>
+@@ -222,11 +298,17 @@ const comments = [];
+ const $ = (s, el) => (el || document).querySelector(s);
+ const multiTab = ${results.length > 1 ? "true" : "false"};
+ 
+-// Tabs
+-document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
+-  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === tab));
++// Agent selector
++const agentSelect = $("#agent");
++if (agentSelect) agentSelect.addEventListener("change", () => {
+   document.querySelectorAll(".panel").forEach(p =>
+-    p.classList.toggle("active", p.dataset.panel === tab.dataset.tab));
++    p.classList.toggle("active", p.dataset.panel === agentSelect.value));
++});
++
++// Brevity levels
++document.querySelectorAll(".levels button").forEach(btn => btn.addEventListener("click", () => {
++  document.querySelectorAll(".levels button").forEach(b => b.classList.toggle("active", b === btn));
++  document.body.className = "level-" + btn.dataset.level;
+ }));
+ 
+ function currentBackend() {
