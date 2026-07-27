@@ -131,8 +131,13 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
         })
         .join("");
       const notes = r.analysis.notes.length
-        ? `<section data-ctx="Agent's notes" class="mt-10">
-            <h2 class="font-serif text-xl">Agent&#8217;s notes</h2>
+        ? `<section data-ctx="Agent's notes" class="agent-notes mt-10">
+            <div class="flex items-baseline justify-between gap-4">
+              <h2 class="font-serif text-xl">Agent&#8217;s notes</h2>
+              <label class="flex cursor-pointer items-center gap-1.5 text-sm text-stone-500 dark:text-stone-400">
+                <input type="checkbox" class="include-notes accent-indigo-600"> Include in review
+              </label>
+            </div>
             <ul class="mt-2 list-disc space-y-1 pl-5">${r.analysis.notes
               .map((n) => `<li>${esc(n).replace(/`([^`]+)`/g, "<code>$1</code>")}</li>`)
               .join("")}</ul>
@@ -383,7 +388,14 @@ bubble.addEventListener("click", () => {
 
 // Done
 $("#done").addEventListener("click", async () => {
-  const payload = { comments, overall: $("#overall").value.trim() };
+  const notes = [...document.querySelectorAll(".include-notes:checked")].map((cb) => {
+    const panel = cb.closest(".panel");
+    return {
+      backend: panel.dataset.backend,
+      items: [...panel.querySelectorAll(".agent-notes li")].map((li) => li.textContent.trim()),
+    };
+  });
+  const payload = { comments, overall: $("#overall").value.trim(), notes };
   await fetch("/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   $("main").style.display = "none";
   $("#finished").style.display = "block";
