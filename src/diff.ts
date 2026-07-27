@@ -28,7 +28,12 @@ export function parseDiff(diff: string): DiffFile[] {
   let newNo = 0;
   let hunkCount = 0;
 
-  for (const line of diff.split("\n")) {
+  // Diffs end with a newline; drop the trailing empty element so it isn't
+  // mistaken for an empty context line at the end of the last hunk.
+  const lines = diff.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+
+  for (const line of lines) {
     if (line.startsWith("diff --git ")) {
       const m = line.match(/^diff --git a\/(.*) b\/(.*)$/);
       file = {
