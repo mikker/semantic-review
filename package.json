@@ -3,9 +3,15 @@
   "version": "0.1.0",
   "description": "Semantic diff review for coding agents: an LLM turns a git diff into a narrative HTML report, a human comments on it, and the feedback comes back as plaintext.",
   "type": "module",
+  "license": "MIT",
+  "repository": "github:mikker/semantic-review",
   "bin": {
     "semantic-review": "src/cli.ts"
   },
+  "files": [
+    "src",
+    "semantic-review.webp"
+  ],
   "scripts": {
     "test": "bun test",
     "eval": "bun evals/run.ts",
