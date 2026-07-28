@@ -6,20 +6,24 @@
 
 import { parseDiff, diffForModel } from "./diff";
 import { resolveBackends, runBackends, BACKENDS } from "./backends";
+import { AnalysisSchema, analysisPrompt, type AnalysisResult } from "./analysis";
+import { getGitDiff } from "./git";
 import { renderReport } from "./render";
 import { serveReview, formatReview } from "./server";
-import { run } from "./proc";
+import { readFile } from "node:fs/promises";
 
 const USAGE = `usage: semantic-review [options] [git diff args...]
 
 Reads the diff from stdin if piped, otherwise runs \`git diff <args>\`
-(default: git diff HEAD). Prints the human's review feedback to stdout.
+(default: git diff HEAD plus untracked files). Prints the human's review feedback to stdout.
 
 options:
   --with <backend,...>   backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
-  --model <id>           model for the anthropic backend (default: claude-opus-5,
-                         env SEMANTIC_REVIEW_MODEL; e.g. claude-sonnet-5, claude-haiku-4-5)
+  --model <id>           model passed to the selected backend (anthropic default:
+                         claude-opus-5 or SEMANTIC_REVIEW_MODEL)
   --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
+  --emit-prompt          print the analysis prompt and exit
+  --analysis <file>      render a caller-provided analysis JSON instead of running a backend
   --no-open              don't open the browser
 
 examples:
@@ -27,7 +31,9 @@ examples:
   semantic-review main...HEAD          review a branch
   git diff -U10 | semantic-review      review a piped diff with more context
   semantic-review --with anthropic,codex   two analyses, tabbed
-  semantic-review --model claude-sonnet-5 --effort medium   cheaper/faster analysis`;
+  semantic-review --model claude-sonnet-5 --effort medium   cheaper/faster analysis
+  semantic-review --emit-prompt > prompt.txt
+  semantic-review --analysis analysis.json`;
 
 async function getDiff(gitArgs: string[]): Promise<string> {
   if (!process.stdin.isTTY) {
@@ -35,10 +41,7 @@ async function getDiff(gitArgs: string[]): Promise<string> {
     for await (const chunk of process.stdin.setEncoding("utf8")) piped += chunk;
     if (piped.trim()) return piped;
   }
-  const args = gitArgs.length > 0 ? gitArgs : ["HEAD"];
-  const { stdout, stderr, code } = await run(["git", "diff", "--no-color", ...args]);
-  if (code !== 0) throw new Error(`git diff failed: ${stderr.trim()}`);
-  return stdout;
+  return getGitDiff(gitArgs);
 }
 
 async function main() {
@@ -48,6 +51,8 @@ async function main() {
   let openBrowser = true;
   let model: string | undefined;
   let effort: "low" | "medium" | "high" | "xhigh" | "max" | undefined;
+  let emitPrompt = false;
+  let analysisPath: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -66,9 +71,19 @@ async function main() {
         throw new Error(`invalid --effort "${level}" (low|medium|high|xhigh|max)`);
       }
       effort = level as typeof effort;
+    } else if (arg === "--emit-prompt") {
+      emitPrompt = true;
+    } else if (arg === "--analysis") {
+      analysisPath = argv[++i];
+      if (!analysisPath) throw new Error("--analysis requires a file path");
     } else {
       gitArgs.push(arg);
     }
+  }
+
+  if (emitPrompt && analysisPath) throw new Error("--emit-prompt cannot be combined with --analysis");
+  if (analysisPath && (withBackends || model || effort)) {
+    throw new Error("--analysis cannot be combined with --with, --model, or --effort");
   }
 
   const diff = await getDiff(gitArgs);
@@ -78,14 +93,24 @@ async function main() {
     console.error("semantic-review: no changes to review");
     process.exit(1);
   }
-
-  const backends = await resolveBackends(withBackends);
-  console.error(
-    `semantic-review: analyzing ${hunkCount} hunk${hunkCount === 1 ? "" : "s"} across ${files.length} file${files.length === 1 ? "" : "s"} with ${backends.map((b) => b.name).join(", ")}…`,
-  );
+  const changeSummary = `${hunkCount} hunk${hunkCount === 1 ? "" : "s"} across ${files.length} file${files.length === 1 ? "" : "s"}`;
 
   const annotated = diffForModel(files);
-  const results = await runBackends(backends, annotated, { model, effort });
+  if (emitPrompt) {
+    console.log(analysisPrompt(annotated));
+    return;
+  }
+
+  let results: AnalysisResult[];
+  if (analysisPath) {
+    const analysis = AnalysisSchema.parse(JSON.parse(await readFile(analysisPath, "utf8")));
+    results = [{ backend: "host", analysis }];
+    console.error(`semantic-review: rendering caller analysis for ${changeSummary}…`);
+  } else {
+    const backends = await resolveBackends(withBackends);
+    console.error(`semantic-review: analyzing ${changeSummary} with ${backends.map((b) => b.name).join(", ")}…`);
+    results = await runBackends(backends, annotated, { model, effort });
+  }
   const html = await renderReport(results, files);
   const review = await serveReview(html, openBrowser);
 
