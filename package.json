@@ -4,12 +4,18 @@
   "description": "Semantic diff review for coding agents: an LLM turns a git diff into a narrative HTML report, a human comments on it, and the feedback comes back as plaintext.",
   "type": "module",
   "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "code-review",
+    "pi-package"
+  ],
   "repository": "github:mikker/semantic-review",
   "bin": {
     "semantic-review": "dist/cli.js"
   },
   "files": [
     "dist",
+    "skills",
     "semantic-review.webp"
   ],
   "engines": {
