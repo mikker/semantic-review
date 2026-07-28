@@ -26,7 +26,7 @@
     "prepublishOnly": "npm run build",
     "test": "bun test",
     "eval": "bun evals/run.ts",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
