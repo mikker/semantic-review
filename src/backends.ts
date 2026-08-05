@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { z } from "zod";
 import { AnalysisSchema, analysisPrompt, extractAnalysis, type Analysis, type AnalysisResult } from "./analysis";
 import { run } from "./proc";
 
@@ -58,10 +59,43 @@ const anthropicBackend: Backend = {
   },
 };
 
+// Novita's OpenAI-compatible endpoint speaks JSON Schema response_format,
+// so the schema is derived once from AnalysisSchema rather than duplicated.
+const analysisJsonSchema = z.toJSONSchema(AnalysisSchema);
+
+const novitaBackend: Backend = {
+  name: "novita",
+  available: async () => !!process.env.NOVITA_API_KEY,
+  async analyze(annotatedDiff, opts) {
+    const res = await fetch("https://api.novita.ai/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.NOVITA_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: opts.model || process.env.SEMANTIC_REVIEW_MODEL || "deepseek/deepseek-v3.2",
+        messages: [{ role: "user", content: analysisPrompt(annotatedDiff) }],
+        max_tokens: 32000,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "semantic_review_analysis", schema: analysisJsonSchema },
+        },
+      }),
+    });
+    if (!res.ok) throw new Error(`novita exited ${res.status}: ${(await res.text()).slice(0, 500)}`);
+    const body = (await res.json()) as { choices: { message: { content: string } }[] };
+    const text = body.choices[0]?.message?.content;
+    if (!text) throw new Error("no content in response");
+    return AnalysisSchema.parse(JSON.parse(text));
+  },
+};
+
 const modelFlag = (o: AnalyzeOpts, flag = "--model") => (o.model ? [flag, o.model] : []);
 
 export const BACKENDS: Record<string, Backend> = {
   anthropic: anthropicBackend,
+  novita: novitaBackend,
   claude: cliBackend("claude", (o) => ["claude", "-p", ...modelFlag(o)]),
   codex: cliBackend("codex", (o) => ["codex", "exec", "--skip-git-repo-check", ...modelFlag(o, "-m"), "-"]),
   gemini: cliBackend("gemini", (o) => ["gemini", ...modelFlag(o)]),
@@ -81,7 +115,7 @@ export async function resolveBackends(requested: string[] | null): Promise<Backe
     if (await backend.available()) return [backend];
   }
   throw new Error(
-    "no backend available: set ANTHROPIC_API_KEY, or install one of: claude, codex, gemini (or pass --with)",
+    "no backend available: set ANTHROPIC_API_KEY or NOVITA_API_KEY, or install one of: claude, codex, gemini (or pass --with)",
   );
 }
 

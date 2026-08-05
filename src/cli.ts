@@ -20,7 +20,8 @@ Reads the diff from stdin if piped, otherwise runs \`git diff <args>\`
 options:
   --with <backend,...>   backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
   --model <id>           model passed to the selected backend (anthropic default:
-                         claude-opus-5 or SEMANTIC_REVIEW_MODEL)
+                         claude-opus-5, novita default: deepseek/deepseek-v3.2,
+                         or SEMANTIC_REVIEW_MODEL)
   --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
   --emit-prompt          print the analysis prompt and exit
   --analysis <file>      render a caller-provided analysis JSON instead of running a backend
