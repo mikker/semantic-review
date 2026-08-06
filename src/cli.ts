@@ -11,6 +11,7 @@ import { getGitDiff } from "./git";
 import { renderReport } from "./render";
 import { serveReview, formatReview } from "./server";
 import { readFile } from "node:fs/promises";
+import { configuredBackends, loadConfig, type Effort } from "./config";
 
 const USAGE = `usage: semantic-review [options] [git diff args...]
 
@@ -46,13 +47,19 @@ async function getDiff(gitArgs: string[]): Promise<string> {
 
 async function main() {
   const argv = process.argv.slice(2);
+  if (argv.includes("-h") || argv.includes("--help")) {
+    console.log(USAGE);
+    return;
+  }
+  const config = await loadConfig();
   const gitArgs: string[] = [];
-  let withBackends: string[] | null = null;
+  let withBackends: string[] | null = configuredBackends(config.backend);
   let openBrowser = true;
-  let model: string | undefined;
-  let effort: "low" | "medium" | "high" | "xhigh" | "max" | undefined;
+  let model: string | undefined = config.model;
+  let effort: Effort | undefined = config.effort;
   let emitPrompt = false;
   let analysisPath: string | undefined;
+  let explicitAnalysisOption = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -62,10 +69,13 @@ async function main() {
     } else if (arg === "--no-open") {
       openBrowser = false;
     } else if (arg === "--with") {
+      explicitAnalysisOption = true;
       withBackends = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     } else if (arg === "--model") {
+      explicitAnalysisOption = true;
       model = argv[++i];
     } else if (arg === "--effort") {
+      explicitAnalysisOption = true;
       const level = argv[++i];
       if (!["low", "medium", "high", "xhigh", "max"].includes(level ?? "")) {
         throw new Error(`invalid --effort "${level}" (low|medium|high|xhigh|max)`);
@@ -82,7 +92,7 @@ async function main() {
   }
 
   if (emitPrompt && analysisPath) throw new Error("--emit-prompt cannot be combined with --analysis");
-  if (analysisPath && (withBackends || model || effort)) {
+  if (analysisPath && explicitAnalysisOption) {
     throw new Error("--analysis cannot be combined with --with, --model, or --effort");
   }
 

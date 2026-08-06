@@ -39,6 +39,21 @@ semantic-review --emit-prompt > prompt.txt
 semantic-review --analysis analysis.json
 ```
 
+## Preferences
+
+Put user defaults in `~/.config/semantic-review/config.json` (or
+`$XDG_CONFIG_HOME/semantic-review/config.json`). Command-line options override
+them. For example, to always use the Codex CLI by default:
+
+```json
+{
+  "backend": "codex"
+}
+```
+
+`backend` may also be an array for a multi-backend review. The other supported
+settings are `model` and `effort`.
+
 Try it with your agent:
 
 > Run `npx semantic-review` and wait for it to exit. Its `stdout` is the user's review feedback — treat each comment as a change request and address it.
