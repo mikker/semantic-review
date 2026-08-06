@@ -19,7 +19,7 @@ agent runs `semantic-review` ──► LLM analyzes the diff ──► browser o
 agent reads stdout ◄── plaintext feedback ◄── human comments, clicks Done
 ```
 
-Requires Node >= 20 (or [Bun](https://bun.sh)) and one backend: `ANTHROPIC_API_KEY`, or an installed `claude`, `codex`, `gemini`, or `pi` CLI.
+Requires Node >= 20 (or [Bun](https://bun.sh)) and one backend: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or an installed `claude`, `codex`, `gemini`, or `pi` CLI.
 
 ```sh
 npx semantic-review
@@ -33,6 +33,7 @@ semantic-review                        # review uncommitted changes
 semantic-review main...HEAD            # review a branch
 git diff -U10 | semantic-review        # review any piped diff
 semantic-review --with anthropic,codex # one analysis per backend, tabbed
+semantic-review --with openai          # use the OpenAI API
 semantic-review --model claude-sonnet-5 --effort medium
 # Generate a prompt, then render caller-provided analysis
 semantic-review --emit-prompt > prompt.txt
