@@ -29,6 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "beautiful-mermaid": "^1.1.3",
     "shiki": "^3.13.0",
     "zod": "^4"
   },

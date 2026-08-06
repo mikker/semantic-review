@@ -35,6 +35,7 @@ git diff -U10 | semantic-review        # review any piped diff
 semantic-review --with anthropic,codex # one analysis per backend, tabbed
 semantic-review --with openai          # use the OpenAI API
 semantic-review --model claude-sonnet-5 --effort medium
+semantic-review --export review.html  # standalone review; Done copies feedback
 # Generate a prompt, then render caller-provided analysis
 semantic-review --emit-prompt > prompt.txt
 semantic-review --analysis analysis.json
@@ -54,6 +55,14 @@ them. For example, to always use the Codex CLI by default:
 
 `backend` may also be an array for a multi-backend review. The other supported
 settings are `model` and `effort`.
+
+## Export
+
+`--export <file>` writes the walkthrough as a self-contained HTML document
+with no remote assets or server dependency. Reviewers can add line, selection,
+and overall comments as usual. **Done** copies the same plaintext feedback the
+interactive server would return, ready to paste back to an agent. The absolute
+path of the exported file is printed to stdout.
 
 Try it with your agent:
 

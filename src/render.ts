@@ -1,4 +1,5 @@
 import { createHighlighter, bundledLanguages, type Highlighter } from "shiki";
+import { renderMermaidSVG } from "beautiful-mermaid";
 import type { AnalysisResult } from "./analysis";
 import { hunkById, type DiffFile, type Hunk } from "./diff";
 
@@ -46,7 +47,13 @@ interface LineRange {
 const CARD = "rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900";
 
 // Renders a hunk (or an excerpt of it) as a highlighted, commentable diff table.
-function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk, range?: LineRange | null): string {
+function renderHunk(
+  hl: Highlighter,
+  file: DiffFile,
+  hunk: Hunk,
+  range?: LineRange | null,
+  commentable = true,
+): string {
   const lang = langFor(file.path);
   const code = hunk.lines.map((l) => l.text).join("\n");
   let tokenLines: { htmlStyle?: string | Record<string, string>; color?: string; content: string }[][];
@@ -76,7 +83,7 @@ function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk, range?: LineRan
     return `<tr class="${line.kind}" data-ref="${esc(lineRef)}">
       <td class="g">${line.oldNo ?? ""}</td><td class="g">${line.newNo ?? ""}</td>
       <td class="m">${line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</td>
-      <td class="c"><button class="lc" title="Comment on this line">＋</button>${codeHtml}</td>
+      <td class="c">${commentable ? '<button class="lc" title="Comment on this line">＋</button>' : ""}${codeHtml}</td>
     </tr>`;
   });
 
@@ -90,15 +97,31 @@ function renderHunk(hl: Highlighter, file: DiffFile, hunk: Hunk, range?: LineRan
   </div>`;
 }
 
-export async function renderReport(results: AnalysisResult[], files: DiffFile[]): Promise<string> {
+export interface RenderOptions {
+  exportMode?: boolean;
+}
+
+export async function renderReport(
+  results: AnalysisResult[],
+  files: DiffFile[],
+  { exportMode = false }: RenderOptions = {},
+): Promise<string> {
   const langs = [...new Set(files.map((f) => langFor(f.path)).filter((l) => l !== "text"))];
   const hl = await createHighlighter({ themes: ["github-light", "github-dark"], langs });
   const hunks = hunkById(files);
   const anyDiagram = results.some(
     (r) => r.analysis.diagram.trim() || r.analysis.sections.some((s) => s.diagram.trim()),
   );
-  const diagramCard = (source: string) =>
-    source.trim() ? `<div class="${CARD} my-4 p-4"><pre class="mermaid">${esc(source)}</pre></div>` : "";
+  const diagramCard = (source: string) => {
+    if (!source.trim()) return "";
+    if (!exportMode) return `<div class="${CARD} my-4 p-4"><pre class="mermaid">${esc(source)}</pre></div>`;
+    try {
+      const svg = renderMermaidSVG(source, { transparent: true }).replace(/\s*@import url\([^;]+;?/g, "");
+      return `<div class="mermaid ${CARD}">${svg}</div>`;
+    } catch {
+      return `<pre class="mermaid ${CARD}">${esc(source)}</pre>`;
+    }
+  };
 
   const agentOptions = results
     .map((r, i) => `<option value="${i}">${esc(r.backend)}</option>`)
@@ -186,7 +209,7 @@ export async function renderReport(results: AnalysisResult[], files: DiffFile[])
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} — semantic-review</title>
-<script src="https://cdn.tailwindcss.com"></script>
+${exportMode ? "" : '<script src="https://cdn.tailwindcss.com"></script>'}
 <style>
 /* Custom layer for what Tailwind doesn't cover cleanly: diff tables, shiki
    dual themes, brevity-level visibility, and the dynamic comment UI. */
@@ -225,6 +248,73 @@ tr:hover .lc { opacity: 1; }
   border-left: 3px solid #4f46e5; font: 11.5px ui-monospace, Menlo, monospace;
   white-space: pre-wrap; word-break: break-all; max-height: 90px; overflow: auto; }
 .comment-card blockquote { border-left-color: rgb(214 211 209); color: rgb(120 113 108); overflow: hidden; }
+${exportMode ? `
+* { box-sizing: border-box; }
+body { margin: 0; background: #fafaf9; color: #1e293b; font: 15px/1.55 ui-sans-serif, system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px; min-height: 53px;
+  padding: 10px 24px; border-bottom: 1px solid #e7e5e4; background: rgb(250 250 249 / .94); backdrop-filter: blur(8px); }
+header > span { color: #a8a29e; font-size: 14px; }
+h1, h2 { font-family: ui-serif, Georgia, serif; font-weight: 500; }
+h1 { flex: 1; min-width: 0; margin: 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+h2 { margin: 0 0 8px; font-size: 20px; }
+button, select, textarea { font: inherit; }
+button, select { border: 1px solid #e7e5e4; border-radius: 8px; background: white; color: inherit; }
+button { cursor: pointer; }
+#agent { padding: 6px 8px; }
+.levels { display: inline-flex; overflow: hidden; border: 1px solid #e7e5e4; border-radius: 8px; }
+.levels button { padding: 6px 14px; border: 0; border-right: 1px solid #e7e5e4; border-radius: 0; color: #78716c; }
+.levels button:last-child { border-right: 0; }
+#done, .save { padding: 6px 16px; border-color: #4f46e5; background: #4f46e5; color: white; font-weight: 600; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+#report { width: 100%; max-width: 900px; padding: 24px 28px 96px; }
+aside { position: sticky; top: 53px; height: calc(100vh - 53px); overflow-y: auto; padding: 16px;
+  border-left: 1px solid #e7e5e4; }
+aside h3 { margin: 0 0 8px; color: #a8a29e; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+aside h3:nth-of-type(2) { margin-top: 24px; }
+textarea { width: 100%; min-height: 70px; padding: 8px; resize: vertical; border: 1px solid #e7e5e4;
+  border-radius: 8px; background: white; color: inherit; }
+.tldr, .hunk, .mermaid, summary { border: 1px solid #e7e5e4; border-radius: 9px; background: white; }
+.tldr { padding: 20px; }
+.tldr > span { color: #4f46e5; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+section { margin-top: 38px; }
+section > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+section label { color: #78716c; font-size: 14px; cursor: pointer; }
+nav { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; }
+a { color: #4f46e5; }
+.mermaid { margin: 16px 0; padding: 16px; overflow: auto; }
+.mermaid svg { display: block; max-width: 100%; height: auto; margin: auto; }
+.hunk { margin: 12px 0; overflow: hidden; }
+.hunk > div { display: flex; gap: 12px; padding: 6px 12px; border-bottom: 1px solid #e7e5e4;
+  background: #f5f5f4; font: 12px ui-monospace, monospace; }
+.note { margin-bottom: 16px; color: #78716c; font-size: 13.5px; }
+details { margin: 8px 0; }
+summary { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; cursor: pointer; }
+summary span:first-child { flex: 1; font: 600 14px ui-monospace, monospace; }
+.hidden { display: none; }
+#composer { position: fixed; right: 340px; bottom: 20px; z-index: 30; display: none; width: 380px;
+  padding: 12px; border: 1px solid #e7e5e4; border-radius: 12px; background: white; box-shadow: 0 16px 40px rgb(0 0 0 / .2); }
+#composer .ref { color: #a8a29e; font: 11px ui-monospace, monospace; word-break: break-all; }
+#composer > div:last-child { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+#composer button { padding: 4px 12px; }
+.comment-card { margin-bottom: 10px; padding: 10px; border: 1px solid #e7e5e4; border-radius: 8px; background: white; font-size: 14px; }
+.comment-card button { float: right; border: 0; color: #a8a29e; }
+.comment-card > div:first-of-type { color: #a8a29e; font: 11px ui-monospace, monospace; word-break: break-all; }
+#finished { padding: 96px 20px; text-align: center; }
+@media (prefers-color-scheme: dark) {
+  body { background: #0c0a09; color: #f5f5f4; }
+  header { border-color: #292524; background: rgb(12 10 9 / .94); }
+  aside, .levels, .levels button, textarea, button, select, .tldr, .hunk, .mermaid, summary,
+  #composer, .comment-card { border-color: #292524; background-color: #1c1917; }
+  .hunk > div { border-color: #292524; background: #0c0a09; }
+}
+@media (max-width: 800px) {
+  header { flex-wrap: wrap; padding: 10px 14px; }
+  header h1 { flex-basis: calc(100% - 120px); }
+  main { display: block; }
+  #report { padding: 20px 14px 64px; }
+  aside { position: static; height: auto; border-top: 1px solid #e7e5e4; border-left: 0; }
+  #composer { right: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); }
+}` : ""}
 </style>
 </head>
 <body class="level-walk bg-stone-50 font-sans text-slate-900 dark:bg-stone-950 dark:text-stone-100">
@@ -264,11 +354,11 @@ tr:hover .lc { opacity: 1; }
   </div>
 </div>
 <div id="finished" class="hidden px-5 py-24 text-center">
-  <h2 class="font-serif text-2xl">Review sent ✓</h2>
-  <p class="mt-2 text-stone-500">Feedback was delivered back to the agent. You can close this tab.</p>
+  <h2 class="font-serif text-2xl">${exportMode ? "Review copied ✓" : "Review sent ✓"}</h2>
+  <p class="mt-2 text-stone-500">${exportMode ? "Feedback is on your clipboard, ready to paste back to the agent." : "Feedback was delivered back to the agent. You can close this tab."}</p>
 </div>
 <script type="module">
-${anyDiagram ? `import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+${anyDiagram && !exportMode ? `import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
 mermaid.initialize({
   startOnLoad: false,
   theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral",
@@ -396,7 +486,42 @@ $("#done").addEventListener("click", async () => {
     };
   });
   const payload = { comments, overall: $("#overall").value.trim(), notes };
-  await fetch("/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  ${exportMode ? `const lines = [];
+  if (payload.comments.length === 0 && !payload.overall) {
+    lines.push("Review complete: approved, no comments.");
+  } else {
+    lines.push("Review feedback (" + payload.comments.length + " comment" + (payload.comments.length === 1 ? "" : "s") + "):");
+    payload.comments.forEach((comment, index) => {
+      const tag = multiTab && comment.backend ? "[" + comment.backend + "] " : "";
+      lines.push("", (index + 1) + ". " + tag + comment.ref);
+      if (comment.quote) lines.push(...comment.quote.split("\\n").map(line => "   > " + line));
+      lines.push(...comment.text.split("\\n").map(line => "   " + line));
+    });
+    if (payload.overall) lines.push("", "Overall: " + payload.overall);
+  }
+  payload.notes.forEach(note => {
+    lines.push("", multiTab ? "Agent's notes [" + note.backend + "]:" : "Agent's notes:");
+    lines.push(...note.items.map(item => "- " + item));
+  });
+  const feedback = lines.join("\\n");
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(feedback);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = feedback;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) throw new Error("copy command failed");
+    }
+  } catch (error) {
+    alert("Could not copy the review to your clipboard: " + error.message);
+    return;
+  }` : `await fetch("/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });`}
   $("main").style.display = "none";
   $("#finished").style.display = "block";
 });

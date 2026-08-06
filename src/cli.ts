@@ -12,6 +12,7 @@ import { renderReport } from "./render";
 import { serveReview, formatReview } from "./server";
 import { readFile } from "node:fs/promises";
 import { configuredBackends, loadConfig, type Effort } from "./config";
+import { exportReview } from "./export";
 
 const USAGE = `usage: semantic-review [options] [git diff args...]
 
@@ -23,6 +24,7 @@ options:
   --model <id>           model passed to the selected backend (anthropic default:
                          claude-opus-5 or SEMANTIC_REVIEW_MODEL)
   --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
+  --export <file>        write a self-contained review whose Done button copies feedback
   --emit-prompt          print the analysis prompt and exit
   --analysis <file>      render a caller-provided analysis JSON instead of running a backend
   --no-open              don't open the browser
@@ -33,6 +35,7 @@ examples:
   git diff -U10 | semantic-review      review a piped diff with more context
   semantic-review --with anthropic,codex   two analyses, tabbed
   semantic-review --model claude-sonnet-5 --effort medium   cheaper/faster analysis
+  semantic-review --export review.html
   semantic-review --emit-prompt > prompt.txt
   semantic-review --analysis analysis.json`;
 
@@ -59,6 +62,7 @@ async function main() {
   let effort: Effort | undefined = config.effort;
   let emitPrompt = false;
   let analysisPath: string | undefined;
+  let exportPath: string | undefined;
   let explicitAnalysisOption = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -86,6 +90,9 @@ async function main() {
     } else if (arg === "--analysis") {
       analysisPath = argv[++i];
       if (!analysisPath) throw new Error("--analysis requires a file path");
+    } else if (arg === "--export") {
+      exportPath = argv[++i];
+      if (!exportPath) throw new Error("--export requires a file path");
     } else {
       gitArgs.push(arg);
     }
@@ -121,7 +128,11 @@ async function main() {
     console.error(`semantic-review: analyzing ${changeSummary} with ${backends.map((b) => b.name).join(", ")}…`);
     results = await runBackends(backends, annotated, { model, effort });
   }
-  const html = await renderReport(results, files);
+  const html = await renderReport(results, files, { exportMode: !!exportPath });
+  if (exportPath) {
+    console.log(await exportReview(exportPath, html));
+    return;
+  }
   const review = await serveReview(html, openBrowser);
 
   console.log(formatReview(review, results.length > 1));
