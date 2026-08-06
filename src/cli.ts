@@ -9,9 +9,10 @@ import { resolveBackends, runBackends, BACKENDS } from "./backends";
 import { AnalysisSchema, analysisPrompt, type AnalysisResult } from "./analysis";
 import { getGitDiff } from "./git";
 import { renderReport } from "./render";
-import { serveReview, formatReview } from "./server";
+import { serveReview } from "./server";
+import { formatReview } from "./review";
 import { readFile } from "node:fs/promises";
-import { configuredBackends, loadConfig, type Effort } from "./config";
+import { configuredBackends, EFFORTS, isEffort, loadConfig, type Effort } from "./config";
 import { exportReview } from "./export";
 
 const USAGE = `usage: semantic-review [options] [git diff args...]
@@ -23,7 +24,7 @@ options:
   --with <backend,...>   backends: ${Object.keys(BACKENDS).join(", ")} (default: auto-detect)
   --model <id>           model passed to the selected backend (anthropic default:
                          claude-opus-5 or SEMANTIC_REVIEW_MODEL)
-  --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
+  --effort <level>       ${EFFORTS.join("|")} (anthropic backend; default: API default)
   --export <file>        write a self-contained review whose Done button copies feedback
   --emit-prompt          print the analysis prompt and exit
   --analysis <file>      render a caller-provided analysis JSON instead of running a backend
@@ -63,28 +64,22 @@ async function main() {
   let emitPrompt = false;
   let analysisPath: string | undefined;
   let exportPath: string | undefined;
-  let explicitAnalysisOption = false;
+  const hasExplicitAnalysisOptions = argv.some((arg) => ["--with", "--model", "--effort"].includes(arg));
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "-h" || arg === "--help") {
-      console.log(USAGE);
-      return;
-    } else if (arg === "--no-open") {
+    if (arg === "--no-open") {
       openBrowser = false;
     } else if (arg === "--with") {
-      explicitAnalysisOption = true;
-      withBackends = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      withBackends = configuredBackends(argv[++i]);
     } else if (arg === "--model") {
-      explicitAnalysisOption = true;
       model = argv[++i];
     } else if (arg === "--effort") {
-      explicitAnalysisOption = true;
       const level = argv[++i];
-      if (!["low", "medium", "high", "xhigh", "max"].includes(level ?? "")) {
-        throw new Error(`invalid --effort "${level}" (low|medium|high|xhigh|max)`);
+      if (!isEffort(level)) {
+        throw new Error(`invalid --effort "${level}" (${EFFORTS.join("|")})`);
       }
-      effort = level as typeof effort;
+      effort = level;
     } else if (arg === "--emit-prompt") {
       emitPrompt = true;
     } else if (arg === "--analysis") {
@@ -99,7 +94,7 @@ async function main() {
   }
 
   if (emitPrompt && analysisPath) throw new Error("--emit-prompt cannot be combined with --analysis");
-  if (analysisPath && explicitAnalysisOption) {
+  if (analysisPath && hasExplicitAnalysisOptions) {
     throw new Error("--analysis cannot be combined with --with, --model, or --effort");
   }
 

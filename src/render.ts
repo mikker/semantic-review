@@ -2,6 +2,7 @@ import { createHighlighter, bundledLanguages, type Highlighter } from "shiki";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import type { AnalysisResult } from "./analysis";
 import { hunkById, type DiffFile, type Hunk } from "./diff";
+import { formatReview } from "./review";
 
 const LANG_BY_EXT: Record<string, string> = {
   ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
@@ -373,6 +374,7 @@ renderDiagrams();` : `function renderDiagrams() {}`}
 const comments = [];
 const $ = (s, el) => (el || document).querySelector(s);
 const multiTab = ${results.length > 1 ? "true" : "false"};
+${exportMode ? `const formatReview = ${formatReview.toString()};` : ""}
 
 // Agent selector
 const agentSelect = $("#agent");
@@ -486,24 +488,7 @@ $("#done").addEventListener("click", async () => {
     };
   });
   const payload = { comments, overall: $("#overall").value.trim(), notes };
-  ${exportMode ? `const lines = [];
-  if (payload.comments.length === 0 && !payload.overall) {
-    lines.push("Review complete: approved, no comments.");
-  } else {
-    lines.push("Review feedback (" + payload.comments.length + " comment" + (payload.comments.length === 1 ? "" : "s") + "):");
-    payload.comments.forEach((comment, index) => {
-      const tag = multiTab && comment.backend ? "[" + comment.backend + "] " : "";
-      lines.push("", (index + 1) + ". " + tag + comment.ref);
-      if (comment.quote) lines.push(...comment.quote.split("\\n").map(line => "   > " + line));
-      lines.push(...comment.text.split("\\n").map(line => "   " + line));
-    });
-    if (payload.overall) lines.push("", "Overall: " + payload.overall);
-  }
-  payload.notes.forEach(note => {
-    lines.push("", multiTab ? "Agent's notes [" + note.backend + "]:" : "Agent's notes:");
-    lines.push(...note.items.map(item => "- " + item));
-  });
-  const feedback = lines.join("\\n");
+  ${exportMode ? `const feedback = formatReview(payload, multiTab);
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(feedback);

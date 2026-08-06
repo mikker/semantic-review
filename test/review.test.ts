@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatReview } from "../src/server";
+import { formatReview } from "../src/review";
 
 describe("formatReview", () => {
   test("approves when there is nothing to say", () => {
@@ -43,5 +43,11 @@ describe("formatReview", () => {
     const review = { comments: [{ ref: "report", text: "hm", backend: "codex" }], overall: "" };
     expect(formatReview(review, true)).toContain("1. [codex] report");
     expect(formatReview(review, false)).toContain("1. report");
+  });
+
+  test("can run unchanged when embedded in an exported report", () => {
+    const embedded = new Function(`return (${formatReview.toString()})`)() as typeof formatReview;
+    const review = { comments: [{ ref: "report", text: "Fix this." }], overall: "" };
+    expect(embedded(review, false)).toBe(formatReview(review, false));
   });
 });

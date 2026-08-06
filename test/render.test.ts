@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parseDiff } from "../src/diff";
 import { renderReport } from "../src/render";
 
-describe("static report", () => {
+describe("exported report", () => {
   test("is self-contained and copies feedback instead of posting it", async () => {
     const files = parseDiff("diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n");
     const html = await renderReport(
@@ -24,6 +24,7 @@ describe("static report", () => {
     expect(html).not.toContain("fonts.googleapis.com");
     expect(html).not.toContain('fetch("/done"');
     expect(html).toContain("navigator.clipboard?.writeText");
+    expect(html).toContain("const feedback = formatReview(payload, multiTab)");
     expect(html).toContain('id="done"');
     expect(html).toContain('class="lc"');
     expect(html).toContain("Check it.");

@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { AnalysisSchema, analysisPrompt, extractAnalysis, type Analysis, type AnalysisResult } from "./analysis";
+import type { Effort } from "./config";
 import { run } from "./proc";
 
 export interface AnalyzeOpts {
   model?: string; // passed through to the backend; each CLI has its own model names
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  effort?: Effort;
 }
 
 export interface Backend {
