@@ -1,18 +1,43 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { AnalysisSchema, analysisPrompt, extractAnalysis, type Analysis, type AnalysisResult } from "./analysis";
+import type { Effort } from "./config";
 import { run } from "./proc";
 
 export interface AnalyzeOpts {
   model?: string; // passed through to the backend; each CLI has its own model names
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  effort?: Effort;
 }
 
 export interface Backend {
   name: string;
   available(): Promise<boolean>;
   analyze(annotatedDiff: string, opts: AnalyzeOpts): Promise<Analysis>;
+}
+
+const { $schema: _schemaVersion, ...analysisJsonSchema } = z.toJSONSchema(AnalysisSchema);
+
+async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: string }; message?: string };
+      detail = parsed.error?.message || parsed.message || text;
+    } catch {
+      // Keep the response body as the error detail.
+    }
+    throw new Error(`HTTP ${response.status}: ${detail.slice(0, 500)}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`API returned invalid JSON: ${text.slice(0, 500)}`);
+  }
 }
 
 function haveCommand(cmd: string): Promise<boolean> {
@@ -41,51 +66,65 @@ const anthropicBackend: Backend = {
   name: "anthropic",
   available: async () => !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
   async analyze(annotatedDiff, opts) {
-    const client = new Anthropic();
-    const stream = client.messages.stream({
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    if (!apiKey && !authToken) throw new Error("ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN is required");
+    const response = (await postJson("https://api.anthropic.com/v1/messages", {
+      "anthropic-version": "2023-06-01",
+      ...(apiKey ? { "x-api-key": apiKey } : { Authorization: `Bearer ${authToken}` }),
+    }, {
       model: opts.model || process.env.SEMANTIC_REVIEW_MODEL || "claude-opus-5",
       max_tokens: 32000,
       output_config: {
-        format: zodOutputFormat(AnalysisSchema),
-        // SDK typings lag the API: "xhigh" is valid but missing from the union.
-        ...(opts.effort ? { effort: opts.effort as "high" } : {}),
+        format: { type: "json_schema", schema: analysisJsonSchema },
+        ...(opts.effort ? { effort: opts.effort } : {}),
       },
       messages: [{ role: "user", content: analysisPrompt(annotatedDiff) }],
-    });
-    const message = await stream.finalMessage();
-    const text = message.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") throw new Error(`no text in response (stop_reason: ${message.stop_reason})`);
-    return AnalysisSchema.parse(JSON.parse(text.text));
+    })) as { content?: { type: string; text?: string }[]; stop_reason?: string };
+    const text = response.content?.find((block) => block.type === "text")?.text;
+    if (!text) throw new Error(`no text in response (stop_reason: ${response.stop_reason ?? "unknown"})`);
+    return AnalysisSchema.parse(JSON.parse(text));
   },
 };
 
-// Novita's OpenAI-compatible endpoint speaks JSON Schema response_format,
-// so the schema is derived once from AnalysisSchema rather than duplicated.
-const analysisJsonSchema = z.toJSONSchema(AnalysisSchema);
+const openaiBackend: Backend = {
+  name: "openai",
+  available: async () => !!process.env.OPENAI_API_KEY,
+  async analyze(annotatedDiff, opts) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required");
+    const response = (await postJson("https://api.openai.com/v1/responses", {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    }, {
+      model: opts.model || process.env.SEMANTIC_REVIEW_MODEL || "gpt-5.6",
+      input: analysisPrompt(annotatedDiff),
+      text: {
+        format: { type: "json_schema", name: "semantic_review", schema: analysisJsonSchema, strict: true },
+      },
+    })) as { output?: { type: string; content?: { type: string; text?: string }[] }[] };
+    const text = response.output
+      ?.find((item) => item.type === "message")
+      ?.content?.find((item) => item.type === "output_text")?.text;
+    if (!text) throw new Error("no text in response");
+    return AnalysisSchema.parse(JSON.parse(text));
+  },
+};
 
 const novitaBackend: Backend = {
   name: "novita",
   available: async () => !!process.env.NOVITA_API_KEY,
   async analyze(annotatedDiff, opts) {
-    const res = await fetch("https://api.novita.ai/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.NOVITA_API_KEY}`,
-        "Content-Type": "application/json",
+    if (!process.env.NOVITA_API_KEY) throw new Error("NOVITA_API_KEY is required");
+    const response = (await postJson("https://api.novita.ai/openai/v1/chat/completions", {
+      Authorization: `Bearer ${process.env.NOVITA_API_KEY}`,
+    }, {
+      model: opts.model || process.env.SEMANTIC_REVIEW_MODEL || "deepseek/deepseek-v3.2",
+      messages: [{ role: "user", content: analysisPrompt(annotatedDiff) }],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "semantic_review", schema: analysisJsonSchema },
       },
-      body: JSON.stringify({
-        model: opts.model || process.env.SEMANTIC_REVIEW_MODEL || "deepseek/deepseek-v3.2",
-        messages: [{ role: "user", content: analysisPrompt(annotatedDiff) }],
-        max_tokens: 32000,
-        response_format: {
-          type: "json_schema",
-          json_schema: { name: "semantic_review_analysis", schema: analysisJsonSchema },
-        },
-      }),
-    });
-    if (!res.ok) throw new Error(`novita exited ${res.status}: ${(await res.text()).slice(0, 500)}`);
-    const body = (await res.json()) as { choices: { message: { content: string } }[] };
-    const text = body.choices[0]?.message?.content;
+    })) as { choices?: { message?: { content?: string } }[] };
+    const text = response.choices?.[0]?.message?.content;
     if (!text) throw new Error("no content in response");
     return AnalysisSchema.parse(JSON.parse(text));
   },
@@ -95,6 +134,7 @@ const modelFlag = (o: AnalyzeOpts, flag = "--model") => (o.model ? [flag, o.mode
 
 export const BACKENDS: Record<string, Backend> = {
   anthropic: anthropicBackend,
+  openai: openaiBackend,
   novita: novitaBackend,
   claude: cliBackend("claude", (o) => ["claude", "-p", ...modelFlag(o)]),
   codex: cliBackend("codex", (o) => ["codex", "exec", "--skip-git-repo-check", ...modelFlag(o, "-m"), "-"]),
@@ -110,12 +150,12 @@ export async function resolveBackends(requested: string[] | null): Promise<Backe
       return backend;
     });
   }
-  // Auto-detect: prefer the direct API, then installed agent CLIs.
+  // Auto-detect: prefer direct APIs, then installed agent CLIs.
   for (const backend of Object.values(BACKENDS)) {
     if (await backend.available()) return [backend];
   }
   throw new Error(
-    "no backend available: set ANTHROPIC_API_KEY or NOVITA_API_KEY, or install one of: claude, codex, gemini (or pass --with)",
+    "no backend available: set ANTHROPIC_API_KEY, OPENAI_API_KEY, or NOVITA_API_KEY, or install one of: claude, codex, gemini, pi (or pass --with)",
   );
 }
 

@@ -9,8 +9,11 @@ import { resolveBackends, runBackends, BACKENDS } from "./backends";
 import { AnalysisSchema, analysisPrompt, type AnalysisResult } from "./analysis";
 import { getGitDiff } from "./git";
 import { renderReport } from "./render";
-import { serveReview, formatReview } from "./server";
+import { serveReview } from "./server";
+import { formatReview } from "./review";
 import { readFile } from "node:fs/promises";
+import { configuredBackends, EFFORTS, isEffort, loadConfig, type Effort } from "./config";
+import { exportReview } from "./export";
 
 const USAGE = `usage: semantic-review [options] [git diff args...]
 
@@ -22,7 +25,8 @@ options:
   --model <id>           model passed to the selected backend (anthropic default:
                          claude-opus-5, novita default: deepseek/deepseek-v3.2,
                          or SEMANTIC_REVIEW_MODEL)
-  --effort <level>       low|medium|high|xhigh|max (anthropic backend; default: API default)
+  --effort <level>       ${EFFORTS.join("|")} (anthropic backend; default: API default)
+  --export <file>        write a self-contained review whose Done button copies feedback
   --emit-prompt          print the analysis prompt and exit
   --analysis <file>      render a caller-provided analysis JSON instead of running a backend
   --no-open              don't open the browser
@@ -33,6 +37,7 @@ examples:
   git diff -U10 | semantic-review      review a piped diff with more context
   semantic-review --with anthropic,codex   two analyses, tabbed
   semantic-review --model claude-sonnet-5 --effort medium   cheaper/faster analysis
+  semantic-review --export review.html
   semantic-review --emit-prompt > prompt.txt
   semantic-review --analysis analysis.json`;
 
@@ -47,43 +52,50 @@ async function getDiff(gitArgs: string[]): Promise<string> {
 
 async function main() {
   const argv = process.argv.slice(2);
+  if (argv.includes("-h") || argv.includes("--help")) {
+    console.log(USAGE);
+    return;
+  }
+  const config = await loadConfig();
   const gitArgs: string[] = [];
-  let withBackends: string[] | null = null;
+  let withBackends: string[] | null = configuredBackends(config.backend);
   let openBrowser = true;
-  let model: string | undefined;
-  let effort: "low" | "medium" | "high" | "xhigh" | "max" | undefined;
+  let model: string | undefined = config.model;
+  let effort: Effort | undefined = config.effort;
   let emitPrompt = false;
   let analysisPath: string | undefined;
+  let exportPath: string | undefined;
+  const hasExplicitAnalysisOptions = argv.some((arg) => ["--with", "--model", "--effort"].includes(arg));
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "-h" || arg === "--help") {
-      console.log(USAGE);
-      return;
-    } else if (arg === "--no-open") {
+    if (arg === "--no-open") {
       openBrowser = false;
     } else if (arg === "--with") {
-      withBackends = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      withBackends = configuredBackends(argv[++i]);
     } else if (arg === "--model") {
       model = argv[++i];
     } else if (arg === "--effort") {
       const level = argv[++i];
-      if (!["low", "medium", "high", "xhigh", "max"].includes(level ?? "")) {
-        throw new Error(`invalid --effort "${level}" (low|medium|high|xhigh|max)`);
+      if (!isEffort(level)) {
+        throw new Error(`invalid --effort "${level}" (${EFFORTS.join("|")})`);
       }
-      effort = level as typeof effort;
+      effort = level;
     } else if (arg === "--emit-prompt") {
       emitPrompt = true;
     } else if (arg === "--analysis") {
       analysisPath = argv[++i];
       if (!analysisPath) throw new Error("--analysis requires a file path");
+    } else if (arg === "--export") {
+      exportPath = argv[++i];
+      if (!exportPath) throw new Error("--export requires a file path");
     } else {
       gitArgs.push(arg);
     }
   }
 
   if (emitPrompt && analysisPath) throw new Error("--emit-prompt cannot be combined with --analysis");
-  if (analysisPath && (withBackends || model || effort)) {
+  if (analysisPath && hasExplicitAnalysisOptions) {
     throw new Error("--analysis cannot be combined with --with, --model, or --effort");
   }
 
@@ -112,7 +124,11 @@ async function main() {
     console.error(`semantic-review: analyzing ${changeSummary} with ${backends.map((b) => b.name).join(", ")}…`);
     results = await runBackends(backends, annotated, { model, effort });
   }
-  const html = await renderReport(results, files);
+  const html = await renderReport(results, files, { exportMode: !!exportPath });
+  if (exportPath) {
+    console.log(await exportReview(exportPath, html));
+    return;
+  }
   const review = await serveReview(html, openBrowser);
 
   console.log(formatReview(review, results.length > 1));
