@@ -114,19 +114,21 @@ const novitaBackend: Backend = {
   available: async () => !!process.env.NOVITA_API_KEY,
   async analyze(annotatedDiff, opts) {
     if (!process.env.NOVITA_API_KEY) throw new Error("NOVITA_API_KEY is required");
+    // json_schema structured outputs are not supported across all Novita
+    // models (e.g. deepseek/deepseek-v4-pro rejects it with HTTP 400); the
+    // prompt already dictates the exact JSON shape, so json_object mode
+    // plus the lenient extractor used by the CLI backends is portable
+    // across the whole catalog instead of gating on per-model support.
     const response = (await postJson("https://api.novita.ai/openai/v1/chat/completions", {
       Authorization: `Bearer ${process.env.NOVITA_API_KEY}`,
     }, {
       model: opts.model || process.env.SEMANTIC_REVIEW_MODEL || "deepseek/deepseek-v3.2",
       messages: [{ role: "user", content: analysisPrompt(annotatedDiff) }],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "semantic_review", schema: analysisJsonSchema },
-      },
+      response_format: { type: "json_object" },
     })) as { choices?: { message?: { content?: string } }[] };
     const text = response.choices?.[0]?.message?.content;
     if (!text) throw new Error("no content in response");
-    return AnalysisSchema.parse(JSON.parse(text));
+    return extractAnalysis(text);
   },
 };
 
