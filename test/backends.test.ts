@@ -4,6 +4,7 @@ import { BACKENDS } from "../src/backends";
 const originalFetch = globalThis.fetch;
 const originalOpenAIKey = process.env.OPENAI_API_KEY;
 const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+const originalNovitaKey = process.env.NOVITA_API_KEY;
 
 const analysis = {
   title: "Change",
@@ -19,6 +20,8 @@ afterEach(() => {
   else process.env.OPENAI_API_KEY = originalOpenAIKey;
   if (originalAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
   else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+  if (originalNovitaKey === undefined) delete process.env.NOVITA_API_KEY;
+  else process.env.NOVITA_API_KEY = originalNovitaKey;
 });
 
 describe("API backends", () => {
@@ -50,5 +53,19 @@ describe("API backends", () => {
     expect(body.output_config.effort).toBe("high");
     expect(body.output_config.format.type).toBe("json_schema");
     expect(body.output_config.format.schema.properties.title.type).toBe("string");
+  });
+
+  test("calls the Novita chat completions API with json_object mode, not json_schema", async () => {
+    process.env.NOVITA_API_KEY = "test-key";
+    let request: RequestInit | undefined;
+    globalThis.fetch = (async (_url, init) => {
+      request = init;
+      return Response.json({ choices: [{ message: { content: JSON.stringify(analysis) } }] });
+    }) as typeof fetch;
+
+    expect((await BACKENDS.novita.analyze("diff", { model: "deepseek/deepseek-v3.2" })).title).toBe("Change");
+    const body = JSON.parse(request?.body as string);
+    expect(body.model).toBe("deepseek/deepseek-v3.2");
+    expect(body.response_format.type).toBe("json_object");
   });
 });

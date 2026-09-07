@@ -19,7 +19,7 @@ agent runs `semantic-review` ──► LLM analyzes the diff ──► browser o
 agent reads stdout ◄── plaintext feedback ◄── human comments, clicks Done
 ```
 
-Requires Node >= 20 (or [Bun](https://bun.sh)) and one backend: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or an installed `claude`, `codex`, `gemini`, or `pi` CLI.
+Requires Node >= 20 (or [Bun](https://bun.sh)) and one backend: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `NOVITA_API_KEY`, or an installed `claude`, `codex`, `gemini`, or `pi` CLI.
 
 ```sh
 npx semantic-review
